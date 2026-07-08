@@ -150,6 +150,11 @@
           <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">若使用 OpenAI，请将模型名改为 <code>gpt-4o-search-preview</code> 以获得真实联网搜索效果；其他厂商是否支持需自行确认，不支持时会自动降级重试。</div>
         </label>
       </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Brave Search API Key（可选）</label>
+        <input id="braveApiKeyInput" type="password" placeholder="BSA..." class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+        <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">仅用于「BD&并购」板块：填写后，搜交易前会先用 Brave 对每家目标公司做真实网页搜索，把搜到的标题/链接/摘要喂给大模型作为依据，减少编造交易和虚构链接；不填则维持原来完全依赖大模型自身知识/联网能力的方式。20家公司约需20次 Brave 请求，注意免费额度。</div>
+      </div>
       <button id="saveSettingsBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">保存设置</button>
       <div id="saveSettingsStatus" class="text-sm h-5"></div>
     </div>
@@ -388,7 +393,7 @@ function loadSettings() {
   const raw = localStorage.getItem(CONFIG.SETTINGS_KEY);
   isFirstUse = raw === null;
   if (!raw) {
-    return { baseUrl: CONFIG.DEFAULT_BASE_URL, apiKey: '', modelName: CONFIG.DEFAULT_MODEL, webSearchEnabled: false };
+    return { baseUrl: CONFIG.DEFAULT_BASE_URL, apiKey: '', modelName: CONFIG.DEFAULT_MODEL, webSearchEnabled: false, braveApiKey: '' };
   }
   try {
     const parsed = JSON.parse(raw);
@@ -397,9 +402,10 @@ function loadSettings() {
       apiKey: parsed.apiKey || '',
       modelName: parsed.modelName || CONFIG.DEFAULT_MODEL,
       webSearchEnabled: !!parsed.webSearchEnabled,
+      braveApiKey: parsed.braveApiKey || '',
     };
   } catch (e) {
-    return { baseUrl: CONFIG.DEFAULT_BASE_URL, apiKey: '', modelName: CONFIG.DEFAULT_MODEL, webSearchEnabled: false };
+    return { baseUrl: CONFIG.DEFAULT_BASE_URL, apiKey: '', modelName: CONFIG.DEFAULT_MODEL, webSearchEnabled: false, braveApiKey: '' };
   }
 }
 
@@ -915,6 +921,71 @@ function buildBdListMessages() {
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
+// 用真实搜索结果（Brave Search）作为依据构造 prompt，要求模型只能依据这些结果作答，不得编造未出现的交易/链接
+function buildBdListMessagesGrounded(searchContext) {
+  const refDate = getReferenceDate();
+  const sys = '你是一位医药行业资深 BD（商务拓展）分析师。下面会提供搜索引擎针对各家目标公司返回的真实网页搜索结果，请只依据这些搜索结果本身提取 BD 交易信息，不要使用搜索结果之外的知识编造交易，也不要使用未出现在搜索结果里的链接。某家公司如果没有搜到相关结果，就跳过它，不要编造。';
+  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD，无法从摘要判断就填N/A)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"必须是下面搜索结果里出现过的真实链接之一，不要编造或修改"}';
+  const contextText = searchContext.map(c => {
+    if (!c.results.length) return `【${c.company}】未搜到相关结果`;
+    return `【${c.company}】\n` + c.results.map((r, i) => `${i + 1}. ${r.title}\n   链接：${r.url}\n   摘要：${r.snippet}`).join('\n');
+  }).join('\n\n');
+  const user = `以下是针对各目标公司的搜索引擎结果（基准日 ${refDate}，仅代表搜索快照，不代表真实发生时间一定在90天内，请结合摘要内容自行判断是否为近期交易）：\n\n${contextText}\n\n请从上述搜索结果中提取重大 BD 交易、License 合作、并购交易信息，只使用出现在搜索结果里的信息和链接，不要编造。请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n没有找到任何交易就返回 {"deals": []}。不要有任何额外文字、不要使用 markdown 代码块。`;
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// 单次 Brave Search 请求，返回精简后的搜索结果（标题/链接/摘要）
+async function braveSearchOne(query, apiKey) {
+  let res;
+  try {
+    res = await fetchWithTimeout(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json', 'X-Subscription-Token': apiKey },
+    }, CONFIG.REQUEST_TIMEOUT_MS);
+  } catch (err) {
+    const e = new Error(err.name === 'AbortError'
+      ? 'Brave Search 请求超时'
+      : 'Brave Search 请求失败：该接口可能不支持浏览器直接跨域调用（CORS）');
+    e.type = err.name === 'AbortError' ? 'timeout' : 'network';
+    throw e;
+  }
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => '');
+    if (res.status === 401) { const e = new Error('Brave Search 401 未授权：请检查 API Key'); e.type = 'auth'; throw e; }
+    if (res.status === 429) { const e = new Error('Brave Search 429 请求超限'); e.type = 'rate_limit'; throw e; }
+    const e = new Error(`Brave Search 请求失败（HTTP ${res.status}）：${bodyText.slice(0, 150)}`); e.type = 'http_error'; throw e;
+  }
+  const json = await res.json();
+  const results = json.web?.results || [];
+  return results.slice(0, 5).map(r => ({ title: r.title || '', url: r.url || '', snippet: r.description || '' }));
+}
+
+// 对每家目标公司依次做一次 Brave 搜索，收集真实检索结果供 LLM 依据；单家公司失败不阻断整体，仅记录错误
+// 全部公司都失败时（通常意味着 Key 无效/网络不通）直接抛错，避免带着完全空的上下文继续跑模型
+async function gatherBdSearchContext(apiKey) {
+  const allResults = [];
+  const partialErrors = [];
+  for (const c of CONFIG.COMPANIES) {
+    try {
+      const query = `${c.name} license agreement OR acquisition OR partnership BD deal 2026`;
+      const results = await braveSearchOne(query, apiKey);
+      allResults.push({ company: c.name, results });
+    } catch (err) {
+      allResults.push({ company: c.name, results: [] });
+      partialErrors.push(`${c.name}: ${err.message}`);
+    }
+    await sleep(1100); // 避免触发 Brave 免费额度的每秒请求限制
+  }
+  if (partialErrors.length === CONFIG.COMPANIES.length) {
+    const e = new Error(`Brave Search 全部请求失败，请检查 API Key 或网络（示例：${partialErrors[0]}）`);
+    e.type = 'brave_search_failed';
+    throw e;
+  }
+  return { allResults, partialErrors };
+}
+
 const DEAL_TYPE_CANON = ['License-in', 'License-out', '并购', '战略合作'];
 
 // 把模型返回的自由文本交易类型对齐到筛选下拉菜单里的固定选项，避免"合并"vs"并购"这类措辞差异导致筛选漏判
@@ -951,12 +1022,22 @@ function generateDealId(record) {
 }
 
 async function fetchBdDeals() {
-  const parsed = await callLLM(buildBdListMessages(), settings);
+  let messages;
+  let partialErrors = [];
+  if (settings.braveApiKey) {
+    const context = await gatherBdSearchContext(settings.braveApiKey);
+    messages = buildBdListMessagesGrounded(context.allResults);
+    partialErrors = context.partialErrors;
+  } else {
+    messages = buildBdListMessages();
+  }
+
+  const parsed = await callLLM(messages, settings);
   const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.deals) ? parsed.deals : null);
   if (!list) {
     const err = new Error('JSON 结构不符合预期（缺少 deals 数组）'); err.type = 'parse_error'; err.raw = JSON.stringify(parsed); throw err;
   }
-  return list.map(d => normalizeDealRecord(d, 'auto'));
+  return { deals: list.map(d => normalizeDealRecord(d, 'auto')), partialErrors };
 }
 
 // 自动搜索结果与已有列表合并：手动导入的交易始终保留，自动结果按 deal_id 去重（撞车时让位给手动条目）
@@ -1000,11 +1081,14 @@ async function refreshBdDeals() {
   renderBdDealList();
 
   try {
-    const newDeals = await fetchBdDeals();
+    const { deals: newDeals, partialErrors } = await fetchBdDeals();
     const existing = bdCacheData?.deals || [];
     const merged = sortDealsByDateDesc(mergeAutoDeals(existing, newDeals));
     bdCacheData = { updatedAt: new Date().toISOString(), deals: merged };
     saveBdCacheToStorage(bdCacheData);
+    if (partialErrors && partialErrors.length) {
+      bdErrorMessages.push(`部分公司的 Brave 搜索检索失败（已跳过，不影响其他公司）：${partialErrors.slice(0, 3).join('；')}${partialErrors.length > 3 ? ' 等' : ''}`);
+    }
   } catch (err) {
     bdErrorMessages.push(`${err.message}${err.raw ? '（原始返回：' + String(err.raw).slice(0, 150) + '…）' : ''}`);
   }
@@ -1329,6 +1413,7 @@ function openSettingsPanel() {
   document.getElementById('apiKeyInput').value = settings.apiKey;
   document.getElementById('modelNameInput').value = settings.modelName;
   document.getElementById('webSearchCheckbox').checked = settings.webSearchEnabled;
+  document.getElementById('braveApiKeyInput').value = settings.braveApiKey;
   document.getElementById('alertMarketCapPctInput').value = alertRules.marketCapPct;
   document.getElementById('alertProductPctInput').value = alertRules.productSalesPct;
   document.getElementById('alertKeywordsInput').value = alertRules.riskKeywords.join(',');
@@ -1368,6 +1453,7 @@ function handleSaveSettings() {
     apiKey: document.getElementById('apiKeyInput').value.trim(),
     modelName: document.getElementById('modelNameInput').value.trim() || CONFIG.DEFAULT_MODEL,
     webSearchEnabled: document.getElementById('webSearchCheckbox').checked,
+    braveApiKey: document.getElementById('braveApiKeyInput').value.trim(),
   };
   saveSettingsToStorage(settings);
   isFirstUse = false;
