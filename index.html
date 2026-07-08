@@ -31,14 +31,17 @@
   </div>
   <!-- Tab 栏 -->
   <div class="max-w-7xl mx-auto px-4 flex gap-1 border-t border-slate-100 dark:border-slate-700/50">
-    <button class="px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400">市值与财务</button>
-    <button class="px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed" title="即将推出" disabled>BD&amp;并购（即将推出）</button>
+    <button data-tab="market" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400">市值与财务</button>
+    <button data-tab="bd" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 dark:text-slate-400">BD&amp;并购</button>
     <button class="px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed" title="即将推出" disabled>AI合作（即将推出）</button>
   </div>
 </header>
 
 <!-- ==================== 主体内容 ==================== -->
 <main class="max-w-7xl mx-auto px-4 py-6">
+
+<!-- ---------- Tab 一：市值与财务 ---------- -->
+<div id="tabPanel-market">
 
   <!-- 免责声明 -->
   <div class="mb-4 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-sm">
@@ -75,6 +78,41 @@
 
   <!-- 卡片网格 -->
   <div id="cardGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+</div>
+
+<!-- ---------- Tab 二：BD&并购 ---------- -->
+<div id="tabPanel-bd" class="hidden">
+
+  <!-- 免责声明（BD 特有：来源链接由 AI 生成，可能不准确甚至虚构） -->
+  <div class="mb-4 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-sm">
+    ⚠️ 以下交易信息由 AI 联网搜索生成，来源链接可能不准确甚至虚构，务必点击核实后再引用；仅供内部参考。
+  </div>
+
+  <div id="bdErrorBanner" class="mb-4 space-y-2"></div>
+
+  <div class="mb-4 flex flex-wrap items-center gap-3 justify-between">
+    <div class="flex items-center gap-3 flex-wrap">
+      <span id="bdLastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
+      <button id="bdRefreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新交易</button>
+      <button id="bdPasteParseBtn" class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium">📋 粘贴原文解析</button>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <select id="bdCompanyFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部公司</option>
+      </select>
+      <select id="bdTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部类型</option>
+        <option value="License-in">License-in</option>
+        <option value="License-out">License-out</option>
+        <option value="并购">并购</option>
+        <option value="战略合作">战略合作</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="bdDealList" class="space-y-3"></div>
+</div>
+
 </main>
 
 <!-- ==================== 设置侧滑面板 ==================== -->
@@ -169,6 +207,20 @@
   </div>
 </div>
 
+<!-- ==================== BD 粘贴原文解析弹窗 ==================== -->
+<div id="bdPasteModalOverlay" class="fixed inset-0 bg-black/40 z-50 hidden flex items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-xl p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold">📋 粘贴原文解析</h3>
+      <button id="closeBdPasteModalBtn" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">✕</button>
+    </div>
+    <p class="text-xs text-slate-500 dark:text-slate-400">粘贴微信公众号等无法自动抓取的文章全文，AI 会尝试提取其中的 BD 交易信息（不联网搜索，仅基于你粘贴的原文）。</p>
+    <textarea id="bdPasteInput" rows="10" placeholder="粘贴文章全文……" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm"></textarea>
+    <button id="bdPasteParseSubmitBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">解析</button>
+    <div id="bdPasteStatus" class="text-sm h-5"></div>
+  </div>
+</div>
+
 <script>
 // ==================== 配置区：集中管理公司列表 / 字段 / 批次等 ====================
 const CONFIG = {
@@ -201,6 +253,9 @@ const CONFIG = {
   SETTINGS_KEY: 'pharma_intel_settings',
   THEME_KEY: 'pharma_intel_theme',
   ALERT_RULES_KEY: 'pharma_intel_alert_rules',
+  BD_CACHE_KEY: 'pharma_intel_bd_deals',
+  BD_DETAIL_CACHE_KEY: 'pharma_intel_bd_details',
+  BD_LOOKBACK_DAYS: 90,
   CACHE_WARN_DAYS: 3,
   DEFAULT_BASE_URL: 'https://api.openai.com/v1',
   DEFAULT_MODEL: 'gpt-4o',
@@ -233,6 +288,16 @@ let currentGroupFilter = 'all';
 let currentSort = 'default';
 let pendingCompanyKeys = new Set();
 let errorMessages = [];
+
+// ---- BD & 并购板块状态 ----
+let bdCacheData = null;         // { updatedAt, deals: [{deal_id, date, pharma, partner, deal_type, asset, upfront, total_value, source_url, source}] }
+let bdDetailCache = {};         // { [deal_id]: 深挖分析结果 }
+let bdErrorMessages = [];
+let bdFilterCompany = 'all';
+let bdFilterType = 'all';
+let bdIsLoading = false;
+let expandedDealId = null;      // 当前展开深挖详情的交易 id
+let bdLoadingDetailId = null;   // 正在请求深挖分析的交易 id
 
 // ==================== 工具函数 ====================
 
@@ -424,11 +489,14 @@ function placeholderRecord(name, reason) {
   };
 }
 
+// ==================== 通用 LLM 请求层（板块一/板块二共用） ====================
+
 // 单次向 {baseURL}/chat/completions 发起请求；combo 控制是否携带 response_format / web_search_options
-async function tryCallLLM(batch, s, combo) {
+// 返回值是从模型输出中提取出的 JSON（对象或数组），具体业务字段结构由调用方自行校验
+async function callLLMRaw(messages, s, combo) {
   const body = {
     model: s.modelName,
-    messages: buildMessages(batch),
+    messages,
     temperature: 0.3,
   };
   if (combo.json) body.response_format = { type: 'json_object' };
@@ -443,7 +511,7 @@ async function tryCallLLM(batch, s, combo) {
     }, CONFIG.REQUEST_TIMEOUT_MS);
   } catch (err) {
     const e = new Error(err.name === 'AbortError'
-      ? `请求超时（${CONFIG.REQUEST_TIMEOUT_MS / 1000}秒），可能是单批公司数量较多、模型响应较慢（尤其开启了联网搜索时），请稍后重试；若持续超时可尝试关闭"联网搜索"或更换响应更快的模型`
+      ? `请求超时（${CONFIG.REQUEST_TIMEOUT_MS / 1000}秒），可能是单批数据量较多、模型响应较慢（尤其开启了联网搜索时），请稍后重试；若持续超时可尝试关闭"联网搜索"或更换响应更快的模型`
       : '网络请求失败：该 API 可能不支持浏览器直接跨域调用（CORS），请检查 Base URL 或更换支持 CORS 的代理地址');
     e.type = err.name === 'AbortError' ? 'timeout' : 'network';
     throw e;
@@ -466,28 +534,22 @@ async function tryCallLLM(batch, s, combo) {
 
   const json = await res.json();
   const content = json.choices?.[0]?.message?.content ?? '';
-  let parsed;
   try {
-    parsed = extractJson(content);
+    return extractJson(content);
   } catch (e) {
     const err = new Error('模型返回内容不是有效 JSON'); err.type = 'parse_error'; err.raw = content; throw err;
   }
-  const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.companies) ? parsed.companies : null);
-  if (!list) {
-    const err = new Error('JSON 结构不符合预期（缺少 companies 数组）'); err.type = 'parse_error'; err.raw = content; throw err;
-  }
-  return list.map(normalizeCompanyRecord);
 }
 
 // 依次尝试不同参数组合（是否带 response_format / web_search_options），遇到 400 类错误才降级重试，其余错误直接抛出
-async function callLLMBatchOnce(batch, s) {
+async function callLLMOnce(messages, s) {
   const combos = s.webSearchEnabled
     ? [{ json: true, web: true }, { json: false, web: true }, { json: true, web: false }, { json: false, web: false }]
     : [{ json: true, web: false }, { json: false, web: false }];
   let lastError = null;
   for (const combo of combos) {
     try {
-      return await tryCallLLM(batch, s, combo);
+      return await callLLMRaw(messages, s, combo);
     } catch (err) {
       lastError = err;
       if (err.type !== 'bad_request') throw err;
@@ -496,18 +558,28 @@ async function callLLMBatchOnce(batch, s) {
   throw lastError;
 }
 
-// 超时通常是瞬时性的（模型该批次响应较慢），自动重试若干次再放弃
-async function callLLMBatch(batch, s) {
+// 超时通常是瞬时性的（模型响应较慢），自动重试若干次再放弃
+async function callLLM(messages, s) {
   let lastError = null;
   for (let attempt = 0; attempt <= CONFIG.TIMEOUT_RETRY_COUNT; attempt++) {
     try {
-      return await callLLMBatchOnce(batch, s);
+      return await callLLMOnce(messages, s);
     } catch (err) {
       lastError = err;
       if (err.type !== 'timeout' || attempt === CONFIG.TIMEOUT_RETRY_COUNT) throw err;
     }
   }
   throw lastError;
+}
+
+// 板块一：请求一批公司的财务摘要，校验 {companies:[...]} 结构并归一化
+async function fetchCompanyBatch(batch, s) {
+  const parsed = await callLLM(buildMessages(batch), s);
+  const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.companies) ? parsed.companies : null);
+  if (!list) {
+    const err = new Error('JSON 结构不符合预期（缺少 companies 数组）'); err.type = 'parse_error'; err.raw = JSON.stringify(parsed); throw err;
+  }
+  return list.map(normalizeCompanyRecord);
 }
 
 // ==================== 异动检测 ====================
@@ -606,7 +678,7 @@ async function refreshAllData() {
   const batches = chunkArray(CONFIG.COMPANIES, CONFIG.BATCH_SIZE);
   for (const batch of batches) {
     try {
-      const results = await callLLMBatch(batch, settings);
+      const results = await fetchCompanyBatch(batch, settings);
       const unresolved = new Set(batch.map(c => c.name));
       for (const r of results) {
         // 优先精确匹配请求的公司名；模型改写/扩写了名称（如 J&J -> Johnson & Johnson）时用别名/归一化匹配兜底
@@ -796,6 +868,408 @@ function renderCards() {
   }).join('');
 }
 
+// ==================== BD & 并购：本地存储读写 ====================
+
+function loadBdCache() {
+  const raw = localStorage.getItem(CONFIG.BD_CACHE_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+function saveBdCacheToStorage(data) {
+  localStorage.setItem(CONFIG.BD_CACHE_KEY, JSON.stringify(data));
+}
+function loadBdDetailCache() {
+  const raw = localStorage.getItem(CONFIG.BD_DETAIL_CACHE_KEY);
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch (e) { return {}; }
+}
+function saveBdDetailCacheToStorage(cache) {
+  localStorage.setItem(CONFIG.BD_DETAIL_CACHE_KEY, JSON.stringify(cache));
+}
+
+// ==================== BD & 并购：第一级 - 交易列表 ====================
+
+const DEAL_FIELDS = ['deal_id', 'date', 'pharma', 'partner', 'deal_type', 'asset', 'upfront', 'total_value', 'source_url'];
+
+function buildBdListMessages() {
+  const refDate = getReferenceDate();
+  const companyNames = CONFIG.COMPANIES.map(c => c.name).join('、');
+  const sys = '你是一位医药行业资深 BD（商务拓展）分析师，擅长追踪药企的授权引进/授权引出/并购/战略合作交易。请基于联网搜索到的公开信息作答，不要编造交易，找不到就返回空数组。';
+  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"来源链接（无法确定真实链接就填N/A，不要编造）"}';
+  const user = `请搜索以下药企在过去 ${CONFIG.BD_LOOKBACK_DAYS} 天内（以 ${refDate} 为基准日）达成的重大 BD 交易、License 合作、并购交易：\n${companyNames}\n\n优先参考来源：BioPharma Dive、FiercePharma、Reuters Health、SEC 8-K 文件、公司官方 Press Release；中文来源：医药魔方、动脉网、36氪医疗、上交所/深交所/港交所公告。\n\n请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n找不到任何交易就返回 {"deals": []}，不要编造。source_url 字段尤其重要：宁可填 N/A 也不要编造不存在的链接。不要有任何额外文字、不要使用 markdown 代码块。`;
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+function normalizeDealRecord(raw, source) {
+  const record = {};
+  for (const f of DEAL_FIELDS) {
+    record[f] = (raw[f] === undefined || raw[f] === null || raw[f] === '') ? 'N/A' : raw[f];
+  }
+  if (!record.deal_id || record.deal_id === 'N/A') record.deal_id = generateDealId(record);
+  record.source = source; // 'auto' | 'manual'
+  return record;
+}
+
+function generateDealId(record) {
+  const base = normalizeCompanyName(`${record.pharma}_${record.partner}_${record.date}`);
+  return base || `deal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function fetchBdDeals() {
+  const parsed = await callLLM(buildBdListMessages(), settings);
+  const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.deals) ? parsed.deals : null);
+  if (!list) {
+    const err = new Error('JSON 结构不符合预期（缺少 deals 数组）'); err.type = 'parse_error'; err.raw = JSON.stringify(parsed); throw err;
+  }
+  return list.map(d => normalizeDealRecord(d, 'auto'));
+}
+
+// 自动搜索结果与已有列表合并：手动导入的交易始终保留，自动结果按 deal_id 去重（撞车时让位给手动条目）
+function mergeAutoDeals(existingDeals, newAutoDeals) {
+  const manualDeals = existingDeals.filter(d => d.source === 'manual');
+  const manualIds = new Set(manualDeals.map(d => d.deal_id));
+  const seenAutoIds = new Set();
+  const dedupedAuto = [];
+  for (const d of newAutoDeals) {
+    if (manualIds.has(d.deal_id) || seenAutoIds.has(d.deal_id)) continue;
+    seenAutoIds.add(d.deal_id);
+    dedupedAuto.push(d);
+  }
+  return [...manualDeals, ...dedupedAuto];
+}
+
+// 手动解析出的交易追加进列表，deal_id 与已有条目撞车时自动加后缀避免覆盖
+function addManualDeals(existingDeals, parsedManualDeals) {
+  const existingIds = new Set(existingDeals.map(d => d.deal_id));
+  const toAdd = [];
+  for (const d of parsedManualDeals) {
+    let id = d.deal_id;
+    while (existingIds.has(id)) id = id + '_2';
+    d.deal_id = id;
+    existingIds.add(id);
+    toAdd.push(d);
+  }
+  return [...existingDeals, ...toAdd];
+}
+
+function sortDealsByDateDesc(deals) {
+  return [...deals].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+}
+
+async function refreshBdDeals() {
+  if (bdIsLoading) return;
+  bdIsLoading = true;
+  bdErrorMessages = [];
+  renderBdErrorBanner();
+  updateBdRefreshButtonState(true);
+  renderBdDealList();
+
+  try {
+    const newDeals = await fetchBdDeals();
+    const existing = bdCacheData?.deals || [];
+    const merged = sortDealsByDateDesc(mergeAutoDeals(existing, newDeals));
+    bdCacheData = { updatedAt: new Date().toISOString(), deals: merged };
+    saveBdCacheToStorage(bdCacheData);
+  } catch (err) {
+    bdErrorMessages.push(`${err.message}${err.raw ? '（原始返回：' + String(err.raw).slice(0, 150) + '…）' : ''}`);
+  }
+
+  bdIsLoading = false;
+  updateBdRefreshButtonState(false);
+  renderBdErrorBanner();
+  renderBdToolbar();
+  populateBdCompanyFilter();
+  renderBdDealList();
+}
+
+function updateBdRefreshButtonState(loading) {
+  const btn = document.getElementById('bdRefreshBtn');
+  btn.disabled = loading;
+  btn.textContent = loading ? '⏳ 搜索中…' : '🔄 刷新交易';
+}
+
+// ==================== BD & 并购：第二级 - 深挖分析 ====================
+
+function buildDealDetailMessages(deal) {
+  const sys = '你是一位医药行业资深 BD 分析师，擅长解读交易逻辑与战略意图。';
+  const schema = '{"target_info":{"target":"靶点","indication":"适应症","phase":"研发阶段","mechanism":"作用机制"},"deal_terms":{"upfront":"首付款","milestones":["里程碑条款列表"],"royalty":"特许权使用费（如披露）"},"rationale":"为什么发生这笔交易？（100字内）","pricing_logic":"为什么值这个价格？（参考同类交易对比，100字内）","strategic_fit":"与收购方现有管线/战略的协同点（100字内）","risks":"潜在风险或值得关注的点（50字内）","sources":["来源URL列表，找不到真实来源就返回空数组，不要编造"]}';
+  const user = `请深度分析以下 BD 交易：\n交易方：${deal.pharma} × ${deal.partner}\n标的：${deal.asset}，类型：${deal.deal_type}，金额：${deal.upfront} 首付 / ${deal.total_value} 总额\n\n请搜索该交易的公开披露信息（SEC 8-K、公司公告、媒体报道），输出严格 JSON 对象，字段 schema：${schema}\n所有字段缺失信息填 "N/A"，不要编造具体数字或来源链接。不要有任何额外文字、不要使用 markdown 代码块。`;
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+function normalizeDealDetail(raw) {
+  return {
+    target_info: {
+      target: raw.target_info?.target || 'N/A',
+      indication: raw.target_info?.indication || 'N/A',
+      phase: raw.target_info?.phase || 'N/A',
+      mechanism: raw.target_info?.mechanism || 'N/A',
+    },
+    deal_terms: {
+      upfront: raw.deal_terms?.upfront || 'N/A',
+      milestones: Array.isArray(raw.deal_terms?.milestones) ? raw.deal_terms.milestones : [],
+      royalty: raw.deal_terms?.royalty || 'N/A',
+    },
+    rationale: raw.rationale || 'N/A',
+    pricing_logic: raw.pricing_logic || 'N/A',
+    strategic_fit: raw.strategic_fit || 'N/A',
+    risks: raw.risks || 'N/A',
+    sources: Array.isArray(raw.sources) ? raw.sources : [],
+  };
+}
+
+async function handleDeepDive(dealId) {
+  const deal = (bdCacheData?.deals || []).find(d => d.deal_id === dealId);
+  if (!deal) return;
+
+  // 已展开则收起（手风琴效果）
+  if (expandedDealId === dealId) {
+    expandedDealId = null;
+    renderBdDealList();
+    return;
+  }
+
+  // 命中缓存直接展示，不重复调用 API
+  if (bdDetailCache[dealId]) {
+    expandedDealId = dealId;
+    renderBdDealList();
+    return;
+  }
+
+  expandedDealId = dealId;
+  bdLoadingDetailId = dealId;
+  renderBdDealList();
+
+  try {
+    const parsed = await callLLM(buildDealDetailMessages(deal), settings);
+    bdDetailCache[dealId] = normalizeDealDetail(parsed);
+  } catch (err) {
+    bdDetailCache[dealId] = { _error: true, _errorMessage: err.message };
+  }
+  saveBdDetailCacheToStorage(bdDetailCache);
+
+  bdLoadingDetailId = null;
+  renderBdDealList();
+}
+
+// ==================== BD & 并购：粘贴原文解析 ====================
+
+function buildPasteParseMessages(rawText) {
+  const sys = '你是一位医药行业资深 BD 分析师，擅长从文章中提取 BD 交易信息。';
+  const schema = '{"deal_id":"唯一标识（公司名+日期缩写）","date":"宣布日期(YYYY-MM-DD，无法确定就填N/A)","pharma":"药企方","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称","upfront":"首付款（未披露填N/A）","total_value":"交易总额（未披露填N/A）","source_url":"固定填 N/A（此来源为用户手动粘贴，无原始链接）"}';
+  const user = `请从下面这段文章原文中提取其中提到的所有 BD 交易信息（可能有多条），输出严格 JSON 对象：{"deals":[交易列表，字段如下]}，字段 schema：${schema}\n如果文章里没有任何 BD 交易信息，返回 {"deals":[]}。只提取原文中明确提到的信息，不要编造原文没有的内容。不要有任何额外文字、不要使用 markdown 代码块。\n\n文章原文：\n"""\n${rawText.slice(0, 8000)}\n"""`;
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+async function handlePasteParseSubmit() {
+  const text = document.getElementById('bdPasteInput').value.trim();
+  const status = document.getElementById('bdPasteStatus');
+  if (!text) {
+    status.textContent = '请先粘贴文章内容';
+    status.className = 'text-sm h-5 text-rose-600 dark:text-rose-400';
+    return;
+  }
+
+  const btn = document.getElementById('bdPasteParseSubmitBtn');
+  btn.disabled = true;
+  status.textContent = '解析中…';
+  status.className = 'text-sm h-5 text-slate-500 dark:text-slate-400';
+
+  try {
+    // 基于用户提供的原文解析，不需要联网搜索，避免不必要的耗时与失败面
+    const parsed = await callLLM(buildPasteParseMessages(text), { ...settings, webSearchEnabled: false });
+    const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.deals) ? parsed.deals : null);
+    if (!list || !list.length) {
+      status.textContent = '未从原文中识别出 BD 交易信息';
+      status.className = 'text-sm h-5 text-amber-600 dark:text-amber-400';
+      return;
+    }
+    const manualDeals = list.map(d => normalizeDealRecord(d, 'manual'));
+    const existing = bdCacheData?.deals || [];
+    const merged = sortDealsByDateDesc(addManualDeals(existing, manualDeals));
+    bdCacheData = { updatedAt: bdCacheData?.updatedAt || new Date().toISOString(), deals: merged };
+    saveBdCacheToStorage(bdCacheData);
+    status.textContent = `✅ 已识别 ${manualDeals.length} 条交易并合并入列表`;
+    status.className = 'text-sm h-5 text-emerald-600 dark:text-emerald-400';
+    document.getElementById('bdPasteInput').value = '';
+    renderBdToolbar();
+    populateBdCompanyFilter();
+    renderBdDealList();
+    setTimeout(closeBdPasteModal, 1500);
+  } catch (err) {
+    status.textContent = `解析失败：${err.message}`;
+    status.className = 'text-sm h-5 text-rose-600 dark:text-rose-400';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openBdPasteModal() {
+  document.getElementById('bdPasteModalOverlay').classList.remove('hidden');
+  document.getElementById('bdPasteModalOverlay').classList.add('flex');
+}
+function closeBdPasteModal() {
+  document.getElementById('bdPasteModalOverlay').classList.add('hidden');
+  document.getElementById('bdPasteModalOverlay').classList.remove('flex');
+  document.getElementById('bdPasteStatus').textContent = '';
+}
+
+// ==================== BD & 并购：渲染 ====================
+
+function dealTypeCls(type) {
+  const map = {
+    'License-in': 'bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300',
+    'License-out': 'bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300',
+    '并购': 'bg-rose-50 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300',
+    '战略合作': 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300',
+  };
+  return map[type] || 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300';
+}
+
+function getFilteredBdDeals() {
+  let list = bdCacheData?.deals || [];
+  if (bdFilterCompany !== 'all') list = list.filter(d => d.pharma === bdFilterCompany);
+  if (bdFilterType !== 'all') list = list.filter(d => d.deal_type === bdFilterType);
+  return list;
+}
+
+function dealDetailBlockHtml(dealId) {
+  if (bdLoadingDetailId === dealId) {
+    return `<div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 space-y-2">
+      <div class="skeleton h-4 w-1/2 rounded"></div>
+      <div class="skeleton h-4 w-full rounded"></div>
+      <div class="skeleton h-4 w-full rounded"></div>
+    </div>`;
+  }
+  const detail = bdDetailCache[dealId];
+  if (!detail) return '';
+  if (detail._error) {
+    return `<div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 text-sm text-rose-600 dark:text-rose-400">❌ 深挖分析失败：${escapeHtml(detail._errorMessage)}</div>`;
+  }
+  const milestones = detail.deal_terms.milestones.length
+    ? detail.deal_terms.milestones.map(m => `<li>${escapeHtml(m)}</li>`).join('')
+    : '<li class="text-slate-400">N/A</li>';
+  const sources = detail.sources.length
+    ? detail.sources.map(u => `<a href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline block truncate">${escapeHtml(u)}</a>`).join('')
+    : '<div class="text-slate-400">N/A</div>';
+  return `
+    <div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3 text-sm">
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">📋 交易条款</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>靶点：${escapeHtml(detail.target_info.target)} ｜ 适应症：${escapeHtml(detail.target_info.indication)} ｜ 阶段：${escapeHtml(detail.target_info.phase)}</div>
+          <div>作用机制：${escapeHtml(detail.target_info.mechanism)}</div>
+          <div>首付款：${escapeHtml(detail.deal_terms.upfront)} ｜ 特许权使用费：${escapeHtml(detail.deal_terms.royalty)}</div>
+          <div>里程碑条款：<ul class="list-disc list-inside">${milestones}</ul></div>
+        </div>
+      </div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💡 交易逻辑</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.rationale)}</div></div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💰 定价分析</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.pricing_logic)}</div></div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🔗 战略协同</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.strategic_fit)}</div></div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">⚠️ 风险提示</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.risks)}</div></div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">来源</div>
+        <div class="space-y-0.5">${sources}</div>
+      </div>
+    </div>`;
+}
+
+function dealCardHtml(deal) {
+  const typeCls = dealTypeCls(deal.deal_type);
+  const isExpanded = expandedDealId === deal.deal_id;
+  const hasSourceUrl = deal.source_url && deal.source_url !== 'N/A';
+  return `
+    <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-white dark:bg-slate-800" data-deal-card="${escapeHtml(deal.deal_id)}">
+      <div class="flex items-start justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs text-slate-400">${escapeHtml(deal.date)}</span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium ${typeCls}">${escapeHtml(deal.deal_type)}</span>
+          ${deal.source === 'manual' ? '<span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">来源：手动导入</span>' : ''}
+        </div>
+        <button data-deep-dive="${escapeHtml(deal.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-medium shrink-0">🔍 深挖分析</button>
+      </div>
+      <div class="mt-2 font-bold">${escapeHtml(deal.pharma)} × ${escapeHtml(deal.partner)}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300 mt-1">标的：${escapeHtml(deal.asset)}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300">首付款：${escapeHtml(deal.upfront)} ｜ 总额：${escapeHtml(deal.total_value)}</div>
+      ${hasSourceUrl ? `<a href="${escapeHtml(deal.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(deal.source_url)}</a>` : ''}
+      ${isExpanded ? dealDetailBlockHtml(deal.deal_id) : ''}
+    </div>`;
+}
+
+function bdSkeletonHtml() {
+  return Array.from({ length: 3 }).map(() => `
+    <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-2 bg-white dark:bg-slate-800">
+      <div class="skeleton h-4 w-1/4 rounded"></div>
+      <div class="skeleton h-5 w-1/2 rounded"></div>
+      <div class="skeleton h-4 w-full rounded"></div>
+    </div>`).join('');
+}
+
+function bdEmptyStateHtml() {
+  return `<div class="text-center py-16 text-slate-400">
+    <div class="text-4xl mb-2">🤝</div>
+    <div>点击「🔄 刷新交易」搜索最近的 BD 交易信息</div>
+  </div>`;
+}
+
+function bdNoMatchHtml() {
+  return `<div class="text-center py-16 text-slate-400">没有符合筛选条件的交易</div>`;
+}
+
+function renderBdDealList() {
+  const container = document.getElementById('bdDealList');
+  if (bdIsLoading && !bdCacheData) { container.innerHTML = bdSkeletonHtml(); return; }
+  if (!bdCacheData) { container.innerHTML = bdEmptyStateHtml(); return; }
+  const list = getFilteredBdDeals();
+  if (!list.length) { container.innerHTML = bdNoMatchHtml(); return; }
+  container.innerHTML = list.map(dealCardHtml).join('');
+}
+
+function renderBdErrorBanner() {
+  const el = document.getElementById('bdErrorBanner');
+  if (!bdErrorMessages.length) { el.innerHTML = ''; return; }
+  el.innerHTML = bdErrorMessages.map(msg => `
+    <div class="px-4 py-3 rounded-lg bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-200 text-sm">
+      ❌ ${escapeHtml(msg)}
+    </div>
+  `).join('');
+}
+
+function renderBdToolbar() {
+  const el = document.getElementById('bdLastUpdatedText');
+  if (!bdCacheData || !bdCacheData.updatedAt) { el.textContent = '尚未获取过数据'; return; }
+  el.textContent = `上次更新时间：${formatDateTime(bdCacheData.updatedAt)}`;
+}
+
+function populateBdCompanyFilter() {
+  const select = document.getElementById('bdCompanyFilter');
+  const currentValue = select.value;
+  const companiesInDeals = new Set((bdCacheData?.deals || []).map(d => d.pharma));
+  select.innerHTML = '<option value="all">全部公司</option>' +
+    CONFIG.COMPANIES.filter(c => companiesInDeals.has(c.name)).map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
+}
+
+// ==================== Tab 切换 ====================
+
+function switchTab(tab) {
+  document.getElementById('tabPanel-market').classList.toggle('hidden', tab !== 'market');
+  document.getElementById('tabPanel-bd').classList.toggle('hidden', tab !== 'bd');
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const active = btn.dataset.tab === tab;
+    btn.classList.toggle('border-indigo-500', active);
+    btn.classList.toggle('text-indigo-600', active);
+    btn.classList.toggle('dark:text-indigo-400', active);
+    btn.classList.toggle('border-transparent', !active);
+    btn.classList.toggle('text-slate-500', !active);
+    btn.classList.toggle('dark:text-slate-400', !active);
+  });
+  // 第一次切到 BD Tab 且本地无缓存时，自动触发一次交易搜索；否则缓存优先，手动点「刷新交易」
+  if (tab === 'bd' && !bdCacheData && !bdIsLoading) {
+    refreshBdDeals();
+  }
+}
+
 // ==================== 设置面板交互 ====================
 
 function openSettingsPanel() {
@@ -943,6 +1417,27 @@ function init() {
   renderToolbar();
   renderCards();
 
+  bdCacheData = loadBdCache();
+  bdDetailCache = loadBdDetailCache();
+  renderBdToolbar();
+  populateBdCompanyFilter();
+  renderBdDealList();
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  document.getElementById('bdRefreshBtn').addEventListener('click', refreshBdDeals);
+  document.getElementById('bdPasteParseBtn').addEventListener('click', openBdPasteModal);
+  document.getElementById('closeBdPasteModalBtn').addEventListener('click', closeBdPasteModal);
+  document.getElementById('bdPasteParseSubmitBtn').addEventListener('click', handlePasteParseSubmit);
+  document.getElementById('bdCompanyFilter').addEventListener('change', (e) => { bdFilterCompany = e.target.value; renderBdDealList(); });
+  document.getElementById('bdTypeFilter').addEventListener('change', (e) => { bdFilterType = e.target.value; renderBdDealList(); });
+  document.getElementById('bdDealList').addEventListener('click', (e) => {
+    const deepDiveBtn = e.target.closest('[data-deep-dive]');
+    if (deepDiveBtn) handleDeepDive(deepDiveBtn.dataset.deepDive);
+  });
+
   document.getElementById('providerPresetSelect').addEventListener('change', handleProviderPresetChange);
   document.getElementById('themeToggleBtn').addEventListener('click', toggleTheme);
   document.getElementById('openSettingsBtn').addEventListener('click', openSettingsPanel);
@@ -983,7 +1478,6 @@ function init() {
 
 document.addEventListener('DOMContentLoaded', init);
 
-// TODO: 板块二 BD&并购
 // TODO: 板块三 AI合作
 </script>
 </body>
