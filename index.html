@@ -106,6 +106,15 @@
     </div>
   </div>
 
+  <div id="bdSearchProgress" class="hidden mb-4">
+    <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
+      <span id="bdSearchProgressText">搜索中…</span>
+    </div>
+    <div class="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+      <div id="bdSearchProgressBar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 0%"></div>
+    </div>
+  </div>
+
   <div id="bdDealList" class="space-y-3"></div>
 </div>
 
@@ -259,12 +268,15 @@ const CONFIG = {
   BD_CACHE_KEY: 'pharma_intel_bd_deals',
   BD_DETAIL_CACHE_KEY: 'pharma_intel_bd_details',
   BD_LOOKBACK_DAYS: 90,
+  // BD 板块每次只处理 1 家公司再调用大模型，搜完一家就能立刻在列表里看到，且单次请求足够小、基本不会超时
+  BD_BATCH_SIZE: 1,
   CACHE_WARN_DAYS: 3,
   DEFAULT_BASE_URL: 'https://api.openai.com/v1',
   DEFAULT_MODEL: 'gpt-4o',
   // 常用厂商预设：仅自动填充 Base URL / 模型名，不含 API Key
   PROVIDER_PRESETS: [
     { label: 'OpenAI 官方', baseUrl: 'https://api.openai.com/v1', modelName: 'gpt-4o' },
+    { label: 'Perplexity（自带联网搜索）', baseUrl: 'https://api.perplexity.ai', modelName: 'sonar' },
     { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', modelName: 'deepseek-chat' },
     { label: '通义千问（阿里云百炼兼容模式）', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', modelName: 'qwen-plus' },
     { label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelName: 'glm-4' },
@@ -308,6 +320,7 @@ let bdFilterType = 'all';
 let bdIsLoading = false;
 let expandedDealId = null;      // 当前展开深挖详情的交易 id
 let bdLoadingDetailId = null;   // 正在请求深挖分析的交易 id
+let bdSearchProgress = null;    // { current, total, phase: 'searching' | 'analyzing' }，用于展示搜索进度条
 
 // ==================== 工具函数 ====================
 
@@ -922,9 +935,9 @@ function saveBdDetailCacheToStorage(cache) {
 
 const DEAL_FIELDS = ['deal_id', 'date', 'pharma', 'partner', 'deal_type', 'asset', 'upfront', 'total_value', 'source_url'];
 
-function buildBdListMessages() {
+function buildBdListMessages(batchCompanies) {
   const refDate = getReferenceDate();
-  const companyNames = CONFIG.COMPANIES.map(c => c.name).join('、');
+  const companyNames = batchCompanies.map(c => c.name).join('、');
   const sys = '你是一位医药行业资深 BD（商务拓展）分析师，擅长追踪药企的授权引进/授权引出/并购/战略合作交易。请基于联网搜索到的公开信息作答，不要编造交易，找不到就返回空数组。';
   const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"来源链接（无法确定真实链接就填N/A，不要编造）"}';
   const user = `请搜索以下药企在过去 ${CONFIG.BD_LOOKBACK_DAYS} 天内（以 ${refDate} 为基准日）达成的重大 BD 交易、License 合作、并购交易：\n${companyNames}\n\n优先参考来源：BioPharma Dive、FiercePharma、Reuters Health、SEC 8-K 文件、公司官方 Press Release；中文来源：医药魔方、动脉网、36氪医疗、上交所/深交所/港交所公告。\n\n请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n找不到任何交易就返回 {"deals": []}，不要编造。source_url 字段尤其重要：宁可填 N/A 也不要编造不存在的链接。不要有任何额外文字、不要使用 markdown 代码块。`;
@@ -1005,29 +1018,34 @@ async function searchWeb(query, providerId, apiKey) {
   throw new Error(`未知的搜索服务商：${providerId}`);
 }
 
-// 对每家目标公司依次做一次搜索，收集真实检索结果供 LLM 依据；单家公司失败不阻断整体，仅记录错误
-// 全部公司都失败时（通常意味着 Key 无效/网络不通）直接抛错，避免带着完全空的上下文继续跑模型
-async function gatherBdSearchContext(providerId, apiKey) {
+// 对一小批公司依次做搜索，收集真实检索结果供 LLM 依据；单家公司失败不阻断整体，仅记录错误
+// bdSearchProgress.current 是跨批次累加的全局进度，由调用方在整个刷新流程开始时初始化好
+// 这一批全部失败时（通常意味着 Key 无效/网络不通）直接抛错，避免带着完全空的上下文继续跑模型
+async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
   const providerLabel = CONFIG.SEARCH_PROVIDER_PRESETS.find(p => p.id === providerId)?.label || providerId;
-  const allResults = [];
+  const results = [];
   const partialErrors = [];
-  for (const c of CONFIG.COMPANIES) {
+  for (const c of batch) {
     try {
       const query = `${c.name} license agreement OR acquisition OR partnership BD deal 2026`;
-      const results = await searchWeb(query, providerId, apiKey);
-      allResults.push({ company: c.name, results });
+      const r = await searchWeb(query, providerId, apiKey);
+      results.push({ company: c.name, results: r });
     } catch (err) {
-      allResults.push({ company: c.name, results: [] });
+      results.push({ company: c.name, results: [] });
       partialErrors.push(`${c.name}: ${err.message}`);
+    }
+    if (bdSearchProgress) {
+      bdSearchProgress = { ...bdSearchProgress, current: bdSearchProgress.current + 1, phase: 'searching' };
+      renderBdSearchProgress();
     }
     await sleep(1100); // 避免触发搜索服务商免费额度的每秒请求限制
   }
-  if (partialErrors.length === CONFIG.COMPANIES.length) {
-    const e = new Error(`${providerLabel} 全部请求失败，请检查 API Key 或网络（示例：${partialErrors[0]}）`);
+  if (partialErrors.length === batch.length) {
+    const e = new Error(`${providerLabel} 请求失败，请检查 API Key 或网络（示例：${partialErrors[0]}）`);
     e.type = 'search_failed';
     throw e;
   }
-  return { allResults, partialErrors };
+  return { results, partialErrors };
 }
 
 const DEAL_TYPE_CANON = ['License-in', 'License-out', '并购', '战略合作'];
@@ -1065,18 +1083,23 @@ function generateDealId(record) {
   return base || `deal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function fetchBdDeals() {
+// 处理一小批（默认 1 家）公司：先搜索（若配置了搜索 Key）再让大模型基于这批公司提取交易
+async function fetchBdDealsForBatch(batch, s) {
   let messages;
   let partialErrors = [];
-  if (settings.searchApiKey) {
-    const context = await gatherBdSearchContext(settings.searchProvider, settings.searchApiKey);
-    messages = buildBdListMessagesGrounded(context.allResults);
+  if (s.searchApiKey) {
+    const context = await gatherBdSearchContextForBatch(batch, s.searchProvider, s.searchApiKey);
+    messages = buildBdListMessagesGrounded(context.results);
     partialErrors = context.partialErrors;
+    if (bdSearchProgress) {
+      bdSearchProgress = { ...bdSearchProgress, phase: 'analyzing' };
+      renderBdSearchProgress();
+    }
   } else {
-    messages = buildBdListMessages();
+    messages = buildBdListMessages(batch);
   }
 
-  const parsed = await callLLM(messages, settings);
+  const parsed = await callLLM(messages, s);
   const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.deals) ? parsed.deals : null);
   if (!list) {
     const err = new Error('JSON 结构不符合预期（缺少 deals 数组）'); err.type = 'parse_error'; err.raw = JSON.stringify(parsed); throw err;
@@ -1116,34 +1139,58 @@ function sortDealsByDateDesc(deals) {
   return [...deals].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 }
 
-async function refreshBdDeals() {
-  if (bdIsLoading || isLoading) return;
-  bdIsLoading = true;
-  bdErrorMessages = [];
-  renderBdErrorBanner();
-  updateBdRefreshButtonState(true);
-  renderBdDealList();
-
+// 处理一小批公司：成功则把结果累加进 newlyFetchedDeals 并立刻合并渲染；超时且批次可再拆分时对半拆开分别重试
+// previousDeals 是刷新开始前的快照（保持不变，用于跟每次新结果重新合并），newlyFetchedDeals 是跨批次累加的新结果
+async function processBdBatch(batch, previousDeals, newlyFetchedDeals) {
   try {
-    const { deals: newDeals, partialErrors } = await fetchBdDeals();
-    const existing = bdCacheData?.deals || [];
-    const merged = sortDealsByDateDesc(mergeAutoDeals(existing, newDeals));
-    bdCacheData = { updatedAt: new Date().toISOString(), deals: merged };
-    saveBdCacheToStorage(bdCacheData);
+    const { deals, partialErrors } = await fetchBdDealsForBatch(batch, settings);
+    newlyFetchedDeals.push(...deals);
     if (partialErrors && partialErrors.length) {
       bdErrorMessages.push(`部分公司的资讯检索失败（已跳过，不影响其他公司）：${partialErrors.slice(0, 3).join('；')}${partialErrors.length > 3 ? ' 等' : ''}`);
     }
   } catch (err) {
-    bdErrorMessages.push(`${err.message}${err.raw ? '（原始返回：' + String(err.raw).slice(0, 150) + '…）' : ''}`);
+    if (err.type === 'timeout' && batch.length > 1) {
+      const mid = Math.ceil(batch.length / 2);
+      await processBdBatch(batch.slice(0, mid), previousDeals, newlyFetchedDeals);
+      await processBdBatch(batch.slice(mid), previousDeals, newlyFetchedDeals);
+      return;
+    }
+    const names = batch.map(c => c.name).join('、');
+    bdErrorMessages.push(`[${names}] ${err.message}${err.raw ? '（原始返回：' + String(err.raw).slice(0, 150) + '…）' : ''}`);
   }
 
-  bdIsLoading = false;
-  updateBdRefreshButtonState(false);
+  const merged = sortDealsByDateDesc(mergeAutoDeals(previousDeals, newlyFetchedDeals));
+  bdCacheData = { updatedAt: new Date().toISOString(), deals: merged };
+  saveBdCacheToStorage(bdCacheData);
+
   renderBdErrorBanner();
   renderBdToolbar();
   populateBdCompanyFilter();
   populateBdTypeFilter();
   renderBdDealList();
+}
+
+async function refreshBdDeals() {
+  if (bdIsLoading || isLoading) return;
+  bdIsLoading = true;
+  bdErrorMessages = [];
+  bdSearchProgress = settings.searchApiKey ? { current: 0, total: CONFIG.COMPANIES.length, phase: 'searching' } : null;
+  renderBdErrorBanner();
+  renderBdSearchProgress();
+  updateBdRefreshButtonState(true);
+  renderBdDealList();
+
+  const previousDeals = bdCacheData?.deals || [];
+  const newlyFetchedDeals = [];
+  const batches = chunkArray(CONFIG.COMPANIES, CONFIG.BD_BATCH_SIZE);
+  for (const batch of batches) {
+    await processBdBatch(batch, previousDeals, newlyFetchedDeals);
+  }
+
+  bdSearchProgress = null;
+  bdIsLoading = false;
+  updateBdRefreshButtonState(false);
+  renderBdSearchProgress();
 }
 
 function updateBdRefreshButtonState(loading) {
@@ -1398,6 +1445,24 @@ function renderBdErrorBanner() {
       ❌ ${escapeHtml(msg)}
     </div>
   `).join('');
+}
+
+// 展示"检索第几家公司/AI 分析中"的搜索进度条；bdSearchProgress 为 null 时隐藏
+function renderBdSearchProgress() {
+  const container = document.getElementById('bdSearchProgress');
+  if (!bdSearchProgress) { container.classList.add('hidden'); return; }
+  container.classList.remove('hidden');
+  const { current, total, phase } = bdSearchProgress;
+  const bar = document.getElementById('bdSearchProgressBar');
+  const text = document.getElementById('bdSearchProgressText');
+  if (phase === 'analyzing') {
+    bar.style.width = '100%';
+    text.textContent = '🤖 AI 正在分析交易信息…';
+  } else {
+    const pct = total ? Math.round((current / total) * 100) : 0;
+    bar.style.width = `${pct}%`;
+    text.textContent = `🔍 正在检索真实资讯：${current}/${total} 家公司`;
+  }
 }
 
 function renderBdToolbar() {
