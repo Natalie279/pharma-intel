@@ -48,14 +48,18 @@
   <!-- 错误提示区 -->
   <div id="errorBanner" class="mb-4 space-y-2"></div>
 
-  <!-- 工具条：更新时间 / 刷新 / 分组 / 排序 -->
+  <!-- 异动汇总提示区 -->
+  <div id="alertSummaryBanner" class="mb-4"></div>
+
+  <!-- 工具条：更新时间 / 刷新 / 分组 / 排序 / 异动筛选 -->
   <div class="mb-4 flex flex-wrap items-center gap-3 justify-between">
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-3 flex-wrap">
       <span id="lastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
       <span id="referenceDateText" class="text-xs text-slate-400"></span>
       <button id="refreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新数据</button>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 flex-wrap">
+      <button id="alertFilterToggle" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-sm bg-white dark:bg-slate-800">🔔 异动筛选</button>
       <div id="groupFilterTabs" class="flex rounded-lg overflow-hidden border border-slate-300 dark:border-slate-600 text-sm">
         <button data-group="all" class="group-filter-btn px-3 py-1.5 bg-indigo-600 text-white">全部</button>
         <button data-group="mnc" class="group-filter-btn px-3 py-1.5 bg-white dark:bg-slate-800">国际MNC</button>
@@ -119,6 +123,26 @@
     <hr class="border-slate-200 dark:border-slate-700">
 
     <div class="space-y-3">
+      <h3 class="text-sm font-bold">🔔 异动检测阈值</h3>
+      <div>
+        <label class="block text-sm font-medium mb-1">市值涨跌幅阈值（%）</label>
+        <input id="alertMarketCapPctInput" type="number" min="0" step="0.5" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">核心产品销售额变化阈值（%）</label>
+        <input id="alertProductPctInput" type="number" min="0" step="0.5" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">风险关键词（英文逗号分隔）</label>
+        <input id="alertKeywordsInput" type="text" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+      </div>
+      <button id="saveAlertRulesBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">保存异动阈值</button>
+      <div id="saveAlertRulesStatus" class="text-sm h-5"></div>
+    </div>
+
+    <hr class="border-slate-200 dark:border-slate-700">
+
+    <div class="space-y-3">
       <h3 class="text-sm font-bold">团队协作</h3>
       <button id="exportConfigBtn" class="w-full py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium">📋 导出配置</button>
 
@@ -176,6 +200,7 @@ const CONFIG = {
   CACHE_KEY: 'pharma_intel_data',
   SETTINGS_KEY: 'pharma_intel_settings',
   THEME_KEY: 'pharma_intel_theme',
+  ALERT_RULES_KEY: 'pharma_intel_alert_rules',
   CACHE_WARN_DAYS: 3,
   DEFAULT_BASE_URL: 'https://api.openai.com/v1',
   DEFAULT_MODEL: 'gpt-4o',
@@ -187,12 +212,21 @@ const CONFIG = {
     { label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', modelName: 'glm-4' },
     { label: 'Moonshot Kimi', baseUrl: 'https://api.moonshot.cn/v1', modelName: 'moonshot-v1-8k' },
   ],
+  // 异动检测默认阈值
+  DEFAULT_ALERT_RULES: {
+    marketCapPct: 5,
+    productSalesPct: 10,
+    riskKeywords: ['降级', '诉讼', '召回', '下调', '暂停', '警告'],
+  },
   FIELDS: ['company', 'display_name', 'market_cap', 'market_cap_trend', 'revenue', 'net_profit', 'top_products', 'key_pipeline', 'data_as_of', 'summary'],
 };
 
 // ==================== 全局状态 ====================
 let settings = null;          // { baseUrl, apiKey, modelName, webSearchEnabled }
-let cacheData = null;         // { updatedAt, companies: { [name]: record } }
+let cacheData = null;         // { updatedAt, referenceDate, companies: { [name]: record }, alerts: { [name]: alert[] } }
+let alertRules = null;        // { marketCapPct, productSalesPct, riskKeywords }
+let companyAlerts = {};       // { [name]: [{type, label}] }，本次刷新后计算出的异动结果
+let alertFilterOnly = false;  // 是否只显示命中异动的公司
 let isFirstUse = false;
 let isLoading = false;
 let currentGroupFilter = 'all';
@@ -229,13 +263,6 @@ function matchesCompany(returnedName, company) {
   return (company.aliases || []).some(alias => normalizeCompanyName(alias) === normReturned);
 }
 
-// 数据基准日：取"今天（发起刷新的这天）的前一天"，作为要求模型对齐估算的参考日期
-function getReferenceDate() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
-}
-
 function b64EncodeUnicode(str) {
   return btoa(String.fromCharCode(...new TextEncoder().encode(str)));
 }
@@ -254,14 +281,21 @@ function daysSince(iso) {
   return (Date.now() - new Date(iso).getTime()) / 86400000;
 }
 
-// 近似解析市值字符串为可比较的数值（以"亿"为基准单位），仅用于排序，不代表精确汇率换算
-function parseMarketCapNumeric(str) {
-  if (!str || typeof str !== 'string') return -Infinity;
+// 数据基准日：取"今天（发起刷新的这天）的前一天"，作为要求模型对齐估算的参考日期
+function getReferenceDate() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// 从文本中近似解析一个数值金额（以"亿"为基准单位），解析失败返回 null；仅用于近似比较/排序，不代表精确汇率换算
+function parseApproxAmount(str) {
+  if (!str || typeof str !== 'string') return null;
   const s = str.replace(/,/g, '');
   const match = s.match(/([\d.]+)\s*(万亿|千亿|百亿|亿|trillion|billion|million|万|[tbm])?/i);
-  if (!match || !match[1]) return -Infinity;
+  if (!match || !match[1]) return null;
   const num = parseFloat(match[1]);
-  if (isNaN(num)) return -Infinity;
+  if (isNaN(num)) return null;
   const unit = (match[2] || '').toLowerCase();
   const unitMap = {
     '万亿': 10000, '千亿': 1000, '百亿': 100, '亿': 1,
@@ -272,6 +306,12 @@ function parseMarketCapNumeric(str) {
   };
   const multiplier = unitMap[unit] !== undefined ? unitMap[unit] : 1;
   return num * multiplier;
+}
+
+// 供排序使用：解析失败时排到最后
+function parseMarketCapNumeric(str) {
+  const v = parseApproxAmount(str);
+  return v === null ? -Infinity : v;
 }
 
 function trendMeta(trend) {
@@ -314,6 +354,25 @@ function loadCache() {
 
 function saveCacheToStorage(data) {
   localStorage.setItem(CONFIG.CACHE_KEY, JSON.stringify(data));
+}
+
+function loadAlertRules() {
+  const raw = localStorage.getItem(CONFIG.ALERT_RULES_KEY);
+  if (!raw) return { ...CONFIG.DEFAULT_ALERT_RULES };
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      marketCapPct: Number(parsed.marketCapPct) >= 0 ? Number(parsed.marketCapPct) : CONFIG.DEFAULT_ALERT_RULES.marketCapPct,
+      productSalesPct: Number(parsed.productSalesPct) >= 0 ? Number(parsed.productSalesPct) : CONFIG.DEFAULT_ALERT_RULES.productSalesPct,
+      riskKeywords: Array.isArray(parsed.riskKeywords) && parsed.riskKeywords.length ? parsed.riskKeywords : [...CONFIG.DEFAULT_ALERT_RULES.riskKeywords],
+    };
+  } catch (e) {
+    return { ...CONFIG.DEFAULT_ALERT_RULES };
+  }
+}
+
+function saveAlertRulesToStorage(rules) {
+  localStorage.setItem(CONFIG.ALERT_RULES_KEY, JSON.stringify(rules));
 }
 
 // ==================== LLM 调用 ====================
@@ -451,6 +510,81 @@ async function callLLMBatch(batch, s) {
   throw lastError;
 }
 
+// ==================== 异动检测 ====================
+
+// 市值涨跌幅异动
+function detectMarketCapAlert(oldRec, newRec, thresholdPct) {
+  const oldVal = parseApproxAmount(oldRec.market_cap);
+  const newVal = parseApproxAmount(newRec.market_cap);
+  if (oldVal === null || newVal === null || oldVal === 0) return null;
+  const pct = ((newVal - oldVal) / oldVal) * 100;
+  if (Math.abs(pct) >= thresholdPct) {
+    return { type: 'market_cap', label: `市值${pct >= 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(1)}%` };
+  }
+  return null;
+}
+
+// 从产品描述文本中粗略提取"产品名"部分（数字出现之前的内容），用于新旧两次描述之间的近似配对
+function parseProductName(str) {
+  if (!str || typeof str !== 'string') return '';
+  const idx = str.search(/[\d]/);
+  const namePart = idx > 0 ? str.slice(0, idx) : str;
+  return normalizeCompanyName(namePart);
+}
+
+// 关键管线新增条目异动（归一化比对，降低模型措辞差异导致的误判）
+function detectPipelineAlert(oldList, newList) {
+  if (!Array.isArray(oldList) || !Array.isArray(newList)) return null;
+  const oldSet = new Set(oldList.map(p => normalizeCompanyName(p)).filter(Boolean));
+  const hasNew = newList.some(p => {
+    const n = normalizeCompanyName(p);
+    return n && !oldSet.has(n);
+  });
+  return hasNew ? { type: 'pipeline', label: '新增管线' } : null;
+}
+
+// 核心产品销售额变化异动（按产品名近似配对新旧描述，解析金额后比较涨跌幅）
+function detectProductAlerts(oldList, newList, thresholdPct) {
+  const alerts = [];
+  if (!Array.isArray(oldList) || !Array.isArray(newList)) return alerts;
+  for (const newP of newList) {
+    const newName = parseProductName(newP);
+    if (!newName) continue;
+    const oldP = oldList.find(p => parseProductName(p) === newName);
+    if (!oldP) continue;
+    const oldAmt = parseApproxAmount(oldP);
+    const newAmt = parseApproxAmount(newP);
+    if (oldAmt === null || newAmt === null || oldAmt === 0) continue;
+    const pct = ((newAmt - oldAmt) / oldAmt) * 100;
+    if (Math.abs(pct) >= thresholdPct) {
+      alerts.push({ type: 'product', label: `核心产品${pct >= 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%` });
+      break; // 一条标签代表"存在此类异动"即可，避免卡片被同类标签刷屏
+    }
+  }
+  return alerts;
+}
+
+// 摘要文本命中风险关键词异动
+function detectRiskKeywordAlert(summary, keywords) {
+  if (!summary || typeof summary !== 'string') return null;
+  const hit = keywords.find(k => k && summary.includes(k));
+  return hit ? { type: 'risk', label: `⚠️ 含风险词(${hit})` } : null;
+}
+
+// 汇总单家公司命中的全部异动规则；任一记录是错误占位符（数据暂缺）时不比对，避免误判
+function detectAlerts(oldRec, newRec, rules) {
+  if (!oldRec || !newRec || oldRec._error || newRec._error) return [];
+  const alerts = [];
+  const mc = detectMarketCapAlert(oldRec, newRec, rules.marketCapPct);
+  if (mc) alerts.push(mc);
+  const pipe = detectPipelineAlert(oldRec.key_pipeline, newRec.key_pipeline);
+  if (pipe) alerts.push(pipe);
+  alerts.push(...detectProductAlerts(oldRec.top_products, newRec.top_products, rules.productSalesPct));
+  const risk = detectRiskKeywordAlert(newRec.summary, rules.riskKeywords);
+  if (risk) alerts.push(risk);
+  return alerts;
+}
+
 // ==================== 主流程：刷新数据 ====================
 
 async function refreshAllData() {
@@ -459,6 +593,10 @@ async function refreshAllData() {
   errorMessages = [];
   renderErrorBanner();
   updateRefreshButtonState(true);
+
+  // 首次使用（无历史缓存）时跳过异动对比；否则先快照旧数据用于刷新后 diff
+  const isFirstRun = !cacheData;
+  const previousCompanies = cacheData ? JSON.parse(JSON.stringify(cacheData.companies || {})) : null;
 
   pendingCompanyKeys = new Set(CONFIG.COMPANIES.map(c => c.name));
   if (!cacheData) cacheData = { updatedAt: null, companies: {} };
@@ -496,10 +634,23 @@ async function refreshAllData() {
   }
 
   cacheData.updatedAt = new Date().toISOString();
+
+  // 异动检测：本次结果逐条对比上一次缓存快照
+  companyAlerts = {};
+  if (!isFirstRun) {
+    for (const c of CONFIG.COMPANIES) {
+      const alerts = detectAlerts(previousCompanies[c.name], cacheData.companies[c.name], alertRules);
+      if (alerts.length) companyAlerts[c.name] = alerts;
+    }
+  }
+  cacheData.alerts = companyAlerts;
   saveCacheToStorage(cacheData);
+
   isLoading = false;
   updateRefreshButtonState(false);
   renderToolbar();
+  renderAlertSummaryBanner(isFirstRun);
+  renderCards();
 }
 
 function updateRefreshButtonState(loading) {
@@ -520,6 +671,18 @@ function renderErrorBanner() {
   `).join('');
 }
 
+// 刷新完成后的异动汇总提示：首次使用不展示；有异动/无异动两种状态
+function renderAlertSummaryBanner(isFirstRun) {
+  const el = document.getElementById('alertSummaryBanner');
+  if (isFirstRun) { el.innerHTML = ''; return; }
+  const count = Object.keys(companyAlerts).length;
+  if (count > 0) {
+    el.innerHTML = `<div class="px-4 py-3 rounded-lg bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-200 text-sm">🔔 本次发现 ${count} 家公司出现异动，已高亮显示</div>`;
+  } else {
+    el.innerHTML = `<div class="px-4 py-3 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">本次数据无明显异动</div>`;
+  }
+}
+
 function renderToolbar() {
   const el = document.getElementById('lastUpdatedText');
   const refEl = document.getElementById('referenceDateText');
@@ -536,6 +699,9 @@ function renderToolbar() {
 
 function getFilteredSortedCompanies() {
   let list = CONFIG.COMPANIES.filter(c => currentGroupFilter === 'all' || c.group === currentGroupFilter);
+  if (alertFilterOnly) {
+    list = list.filter(c => companyAlerts[c.name] && companyAlerts[c.name].length);
+  }
   if (currentSort !== 'default') {
     list = [...list].sort((a, b) => {
       const va = parseMarketCapNumeric(cacheData?.companies?.[a.name]?.market_cap);
@@ -559,7 +725,11 @@ function skeletonCardHtml() {
 
 function cardHtml(company, data) {
   const trend = trendMeta(data.market_cap_trend);
-  const errorRing = data._error ? 'border-rose-300 dark:border-rose-700' : 'border-slate-200 dark:border-slate-700';
+  const alerts = companyAlerts[company.name] || [];
+  const errorRing = data._error ? 'border-rose-300 dark:border-rose-700' : (alerts.length ? 'border-amber-300 dark:border-amber-600' : 'border-slate-200 dark:border-slate-700');
+  const alertBadges = alerts.length
+    ? `<div class="flex flex-wrap gap-1">${alerts.map(a => `<span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 font-medium">${escapeHtml(a.label)}</span>`).join('')}</div>`
+    : '';
   const products = data.top_products.length
     ? data.top_products.map(p => `<li>${escapeHtml(p)}</li>`).join('')
     : '<li class="text-slate-400">N/A</li>';
@@ -569,6 +739,7 @@ function cardHtml(company, data) {
 
   return `
     <div class="rounded-xl border ${errorRing} p-4 space-y-2 bg-white dark:bg-slate-800 flex flex-col">
+      ${alertBadges}
       <div class="flex items-start justify-between gap-2">
         <h3 class="font-bold text-base leading-tight">${escapeHtml(data.display_name)}</h3>
         <span class="text-xs px-2 py-0.5 rounded ${company.group === 'mnc' ? 'bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300' : 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300'}">${company.group === 'mnc' ? '国际MNC' : '国内'}</span>
@@ -598,12 +769,23 @@ function emptyStateHtml() {
   </div>`;
 }
 
+function noAlertMatchHtml() {
+  return `<div class="col-span-full text-center py-16 text-slate-400">
+    <div class="text-4xl mb-2">🔕</div>
+    <div>当前没有命中异动的公司</div>
+  </div>`;
+}
+
 function renderCards() {
   const container = document.getElementById('cardGrid');
   const list = getFilteredSortedCompanies();
 
   if (!cacheData && !isLoading) {
     container.innerHTML = emptyStateHtml();
+    return;
+  }
+  if (alertFilterOnly && list.length === 0) {
+    container.innerHTML = noAlertMatchHtml();
     return;
   }
 
@@ -621,6 +803,9 @@ function openSettingsPanel() {
   document.getElementById('apiKeyInput').value = settings.apiKey;
   document.getElementById('modelNameInput').value = settings.modelName;
   document.getElementById('webSearchCheckbox').checked = settings.webSearchEnabled;
+  document.getElementById('alertMarketCapPctInput').value = alertRules.marketCapPct;
+  document.getElementById('alertProductPctInput').value = alertRules.productSalesPct;
+  document.getElementById('alertKeywordsInput').value = alertRules.riskKeywords.join(',');
   document.getElementById('firstUseTip').classList.toggle('hidden', !isFirstUse);
   document.getElementById('settingsOverlay').classList.remove('hidden');
   document.getElementById('settingsPanel').classList.remove('translate-x-full');
@@ -662,6 +847,22 @@ function handleSaveSettings() {
   isFirstUse = false;
   document.getElementById('firstUseTip').classList.add('hidden');
   const status = document.getElementById('saveSettingsStatus');
+  status.textContent = '✅ 已保存';
+  status.className = 'text-sm h-5 text-emerald-600 dark:text-emerald-400';
+  setTimeout(() => { status.textContent = ''; }, 2000);
+}
+
+function handleSaveAlertRules() {
+  const marketCapPct = parseFloat(document.getElementById('alertMarketCapPctInput').value);
+  const productSalesPct = parseFloat(document.getElementById('alertProductPctInput').value);
+  const keywords = document.getElementById('alertKeywordsInput').value.split(',').map(s => s.trim()).filter(Boolean);
+  alertRules = {
+    marketCapPct: (!isNaN(marketCapPct) && marketCapPct >= 0) ? marketCapPct : CONFIG.DEFAULT_ALERT_RULES.marketCapPct,
+    productSalesPct: (!isNaN(productSalesPct) && productSalesPct >= 0) ? productSalesPct : CONFIG.DEFAULT_ALERT_RULES.productSalesPct,
+    riskKeywords: keywords.length ? keywords : [...CONFIG.DEFAULT_ALERT_RULES.riskKeywords],
+  };
+  saveAlertRulesToStorage(alertRules);
+  const status = document.getElementById('saveAlertRulesStatus');
   status.textContent = '✅ 已保存';
   status.className = 'text-sm h-5 text-emerald-600 dark:text-emerald-400';
   setTimeout(() => { status.textContent = ''; }, 2000);
@@ -735,6 +936,8 @@ function init() {
   initTheme();
   settings = loadSettings();
   cacheData = loadCache();
+  alertRules = loadAlertRules();
+  companyAlerts = cacheData?.alerts || {};
   populateProviderPresets();
 
   renderToolbar();
@@ -746,6 +949,7 @@ function init() {
   document.getElementById('closeSettingsBtn').addEventListener('click', closeSettingsPanel);
   document.getElementById('settingsOverlay').addEventListener('click', closeSettingsPanel);
   document.getElementById('saveSettingsBtn').addEventListener('click', handleSaveSettings);
+  document.getElementById('saveAlertRulesBtn').addEventListener('click', handleSaveAlertRules);
 
   document.getElementById('exportConfigBtn').addEventListener('click', handleExportConfig);
   document.getElementById('closeExportModalBtn').addEventListener('click', closeExportModal);
@@ -754,6 +958,13 @@ function init() {
   document.getElementById('importConfigBtn').addEventListener('click', handleImportConfig);
 
   document.getElementById('refreshBtn').addEventListener('click', refreshAllData);
+
+  document.getElementById('alertFilterToggle').addEventListener('click', (e) => {
+    alertFilterOnly = !alertFilterOnly;
+    e.target.classList.toggle('bg-indigo-600', alertFilterOnly);
+    e.target.classList.toggle('text-white', alertFilterOnly);
+    renderCards();
+  });
 
   document.querySelectorAll('.group-filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
