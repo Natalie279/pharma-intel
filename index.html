@@ -102,10 +102,6 @@
       </select>
       <select id="bdTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="all">全部类型</option>
-        <option value="License-in">License-in</option>
-        <option value="License-out">License-out</option>
-        <option value="并购">并购</option>
-        <option value="战略合作">战略合作</option>
       </select>
     </div>
   </div>
@@ -225,18 +221,18 @@
 // ==================== 配置区：集中管理公司列表 / 字段 / 批次等 ====================
 const CONFIG = {
   COMPANIES: [
-    { name: 'Roche', group: 'mnc' },
-    { name: 'Pfizer', group: 'mnc' },
-    { name: 'Novartis', group: 'mnc' },
-    { name: 'AstraZeneca', group: 'mnc' },
-    { name: 'MSD', group: 'mnc', aliases: ['Merck', 'Merck & Co', 'Merck & Co.', 'Merck Sharp & Dohme'] },
-    { name: 'BMS', group: 'mnc', aliases: ['Bristol-Myers Squibb', 'Bristol Myers Squibb'] },
-    { name: 'J&J', group: 'mnc', aliases: ['Johnson & Johnson', 'Johnson and Johnson'] },
-    { name: 'Lilly', group: 'mnc', aliases: ['Eli Lilly', 'Eli Lilly and Company'] },
-    { name: 'Sanofi', group: 'mnc' },
-    { name: 'AbbVie', group: 'mnc' },
-    { name: 'GSK', group: 'mnc', aliases: ['GlaxoSmithKline'] },
-    { name: 'Takeda', group: 'mnc', aliases: ['Takeda Pharmaceutical'] },
+    { name: 'Roche', group: 'mnc', aliases: ['罗氏'] },
+    { name: 'Pfizer', group: 'mnc', aliases: ['辉瑞'] },
+    { name: 'Novartis', group: 'mnc', aliases: ['诺华'] },
+    { name: 'AstraZeneca', group: 'mnc', aliases: ['阿斯利康'] },
+    { name: 'MSD', group: 'mnc', aliases: ['Merck', 'Merck & Co', 'Merck & Co.', 'Merck Sharp & Dohme', '默沙东'] },
+    { name: 'BMS', group: 'mnc', aliases: ['Bristol-Myers Squibb', 'Bristol Myers Squibb', '百时美施贵宝'] },
+    { name: 'J&J', group: 'mnc', aliases: ['Johnson & Johnson', 'Johnson and Johnson', '强生'] },
+    { name: 'Lilly', group: 'mnc', aliases: ['Eli Lilly', 'Eli Lilly and Company', '礼来'] },
+    { name: 'Sanofi', group: 'mnc', aliases: ['赛诺菲'] },
+    { name: 'AbbVie', group: 'mnc', aliases: ['艾伯维'] },
+    { name: 'GSK', group: 'mnc', aliases: ['GlaxoSmithKline', '葛兰素史克'] },
+    { name: 'Takeda', group: 'mnc', aliases: ['Takeda Pharmaceutical', '武田'] },
     { name: '恒瑞医药', group: 'cn', aliases: ['Hengrui', 'Hengrui Medicine', 'Hengrui Pharmaceuticals', 'Jiangsu Hengrui Medicine', 'Jiangsu Hengrui Pharmaceutical'] },
     { name: '百济神州', group: 'cn', aliases: ['BeiGene', 'BeiGene Ltd'] },
     { name: '信达生物', group: 'cn', aliases: ['Innovent Biologics', 'Innovent'] },
@@ -444,7 +440,7 @@ function saveAlertRulesToStorage(rules) {
 
 function buildMessages(batchCompanies) {
   const refDate = getReferenceDate();
-  const sys = `你是一位资深医药行业分析师。请根据你掌握的最新公开信息，对以下药企进行财务与市值摘要，每家公司严格按照指定 JSON schema 输出，数据缺失字段填 "N/A"，不要编造数字，如不确定请注明"约"或给出范围。请将 ${refDate}（即今天的前一天）作为数据基准日：市值等会逐日变化的数据请尽量给出截至该日期（或最近一个交易日）的估算；营收/净利润等按财报周期披露的数据仍以你实际掌握的最新一期财报为准，不要为了凑日期而编造尚未披露的数字。`;
+  const sys = `你是一位资深医药行业分析师。请根据你掌握的最新公开信息，对以下药企进行财务与市值摘要，每家公司严格按照指定 JSON schema 输出。请将 ${refDate}（即今天的前一天）作为数据基准日：市值等会逐日变化的数据请尽量给出截至该日期（或最近一个交易日）的估算；营收/净利润等按财报周期披露的数据仍以你实际掌握的最新一期财报为准，不要为了凑日期而编造尚未披露的数字。关于缺失数据的处理原则：不要编造精确数字，但只要你对大致数量级有把握，就应该给出"约"字开头的估算值或一个合理区间（例如"约2,500亿美元"或"2,000-2,500亿美元"），不要仅仅因为无法确定精确数字就直接填 "N/A"——"N/A" 只用于你连大致范围都完全无法判断的情况，对于罗氏、辉瑞这类信息公开充分的大型上市公司，几乎不应该出现 N/A。`;
   const schema = '{"company":"必须与我提供的原始公司名逐字完全一致（无论中文还是英文，禁止翻译、替换为英文名/股票代码/全称或别名）","display_name":"显示名称（中英双语）","market_cap":"最新市值（如 2,800亿美元）","market_cap_trend":"up|down|flat","revenue":"最近一期年收入","net_profit":"净利润或EBITDA","top_products":["产品A 收入X","产品B 收入Y"],"key_pipeline":["管线A (Ph3)","管线B (Ph2)"],"data_as_of":"该数据实际对应的截至日期/报告期（如晚于或早于基准日，请如实填写真实日期，不要强行对齐为基准日）","summary":"50字内的财务亮点或风险提示"}';
   const names = batchCompanies.map(c => c.name).join('、');
   const user = `请对以下 ${batchCompanies.length} 家公司逐一输出财务摘要，一家都不能少、也不能合并：${names}\n\n必须输出恰好 ${batchCompanies.length} 条记录，company 字段必须逐字复制我给出的公司名，中文名就原样输出中文、英文名就原样输出英文，不要翻译或替换成别的名称（例如给的是"J&J"就不要写成"Johnson & Johnson"，给的是"百济神州"就不要写成"BeiGene"）。即使某公司信息完全无法确定，也要输出该公司的记录，所有字段填 "N/A"，不允许省略整家公司。\n\n请以严格的 JSON 对象格式返回，格式为 {"companies": [每家公司一个对象，字段如下]}，字段 schema：${schema}\n不要有任何额外文字、不要使用 markdown 代码块。`;
@@ -659,8 +655,45 @@ function detectAlerts(oldRec, newRec, rules) {
 
 // ==================== 主流程：刷新数据 ====================
 
+// 处理一批公司：成功则写入结果并对未命中的公司打占位符；超时且批次可再拆分时对半拆开分别重试，
+// 而不是直接放弃整批——这样"批次里有一两家公司拖慢速度"不会连累同批其他公司也超时失败
+async function processCompanyBatch(batch) {
+  try {
+    const results = await fetchCompanyBatch(batch, settings);
+    const unresolved = new Set(batch.map(c => c.name));
+    for (const r of results) {
+      // 优先精确匹配请求的公司名；模型改写/扩写了名称（如 J&J -> Johnson & Johnson）时用别名/归一化匹配兜底
+      const matched = batch.find(c => unresolved.has(c.name) && matchesCompany(r.company, c));
+      if (matched) {
+        cacheData.companies[matched.name] = r;
+        unresolved.delete(matched.name);
+        pendingCompanyKeys.delete(matched.name);
+      }
+    }
+    for (const name of unresolved) {
+      cacheData.companies[name] = placeholderRecord(name, '模型未返回该公司数据');
+      pendingCompanyKeys.delete(name);
+    }
+  } catch (err) {
+    if (err.type === 'timeout' && batch.length > 1) {
+      const mid = Math.ceil(batch.length / 2);
+      await processCompanyBatch(batch.slice(0, mid));
+      await processCompanyBatch(batch.slice(mid));
+      return;
+    }
+    const names = batch.map(c => c.name).join('、');
+    errorMessages.push(`[${names}] ${err.message}${err.raw ? '（原始返回：' + err.raw.slice(0, 150) + '…）' : ''}`);
+    for (const c of batch) {
+      cacheData.companies[c.name] = placeholderRecord(c.name, err.message);
+      pendingCompanyKeys.delete(c.name);
+    }
+  }
+  renderCards();
+  renderErrorBanner();
+}
+
 async function refreshAllData() {
-  if (isLoading) return;
+  if (isLoading || bdIsLoading) return;
   isLoading = true;
   errorMessages = [];
   renderErrorBanner();
@@ -677,32 +710,7 @@ async function refreshAllData() {
 
   const batches = chunkArray(CONFIG.COMPANIES, CONFIG.BATCH_SIZE);
   for (const batch of batches) {
-    try {
-      const results = await fetchCompanyBatch(batch, settings);
-      const unresolved = new Set(batch.map(c => c.name));
-      for (const r of results) {
-        // 优先精确匹配请求的公司名；模型改写/扩写了名称（如 J&J -> Johnson & Johnson）时用别名/归一化匹配兜底
-        const matched = batch.find(c => unresolved.has(c.name) && matchesCompany(r.company, c));
-        if (matched) {
-          cacheData.companies[matched.name] = r;
-          unresolved.delete(matched.name);
-          pendingCompanyKeys.delete(matched.name);
-        }
-      }
-      for (const name of unresolved) {
-        cacheData.companies[name] = placeholderRecord(name, '模型未返回该公司数据');
-        pendingCompanyKeys.delete(name);
-      }
-    } catch (err) {
-      const names = batch.map(c => c.name).join('、');
-      errorMessages.push(`[${names}] ${err.message}${err.raw ? '（原始返回：' + err.raw.slice(0, 150) + '…）' : ''}`);
-      for (const c of batch) {
-        cacheData.companies[c.name] = placeholderRecord(c.name, err.message);
-        pendingCompanyKeys.delete(c.name);
-      }
-    }
-    renderCards();
-    renderErrorBanner();
+    await processCompanyBatch(batch);
   }
 
   cacheData.updatedAt = new Date().toISOString();
@@ -727,8 +735,15 @@ async function refreshAllData() {
 
 function updateRefreshButtonState(loading) {
   const btn = document.getElementById('refreshBtn');
-  btn.disabled = loading;
   btn.textContent = loading ? '⏳ 加载中…' : '🔄 刷新数据';
+  syncRefreshButtonsDisabled();
+}
+
+// 两个板块的刷新互斥：任一板块正在加载时，两个刷新按钮都禁用，避免并发抢占同一个 API 配额
+function syncRefreshButtonsDisabled() {
+  const busy = isLoading || bdIsLoading;
+  document.getElementById('refreshBtn').disabled = busy;
+  document.getElementById('bdRefreshBtn').disabled = busy;
 }
 
 // ==================== 渲染 ====================
@@ -900,11 +915,31 @@ function buildBdListMessages() {
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
+const DEAL_TYPE_CANON = ['License-in', 'License-out', '并购', '战略合作'];
+
+// 把模型返回的自由文本交易类型对齐到筛选下拉菜单里的固定选项，避免"合并"vs"并购"这类措辞差异导致筛选漏判
+function normalizeDealType(raw) {
+  const s = String(raw || '').toLowerCase();
+  if (/license.?-?\s*in|引进|授权引进/.test(s)) return 'License-in';
+  if (/license.?-?\s*out|引出|授出|授权引出/.test(s)) return 'License-out';
+  if (/并购|收购|merger|acquisition|m&a/.test(s)) return '并购';
+  if (/合作|合资|战略|partnership|collaboration|alliance/.test(s)) return '战略合作';
+  return raw || 'N/A'; // 未识别出已知类型时保留原文，不直接丢弃
+}
+
+// 把模型返回的公司名（可能是中文名/别名）对齐到 CONFIG.COMPANIES 里的规范名称，供筛选下拉菜单匹配
+function resolveCompanyName(name) {
+  const matched = CONFIG.COMPANIES.find(c => matchesCompany(name, c));
+  return matched ? matched.name : name;
+}
+
 function normalizeDealRecord(raw, source) {
   const record = {};
   for (const f of DEAL_FIELDS) {
     record[f] = (raw[f] === undefined || raw[f] === null || raw[f] === '') ? 'N/A' : raw[f];
   }
+  record.pharma = resolveCompanyName(record.pharma);
+  record.deal_type = normalizeDealType(record.deal_type);
   if (!record.deal_id || record.deal_id === 'N/A') record.deal_id = generateDealId(record);
   record.source = source; // 'auto' | 'manual'
   return record;
@@ -957,7 +992,7 @@ function sortDealsByDateDesc(deals) {
 }
 
 async function refreshBdDeals() {
-  if (bdIsLoading) return;
+  if (bdIsLoading || isLoading) return;
   bdIsLoading = true;
   bdErrorMessages = [];
   renderBdErrorBanner();
@@ -979,13 +1014,14 @@ async function refreshBdDeals() {
   renderBdErrorBanner();
   renderBdToolbar();
   populateBdCompanyFilter();
+  populateBdTypeFilter();
   renderBdDealList();
 }
 
 function updateBdRefreshButtonState(loading) {
   const btn = document.getElementById('bdRefreshBtn');
-  btn.disabled = loading;
   btn.textContent = loading ? '⏳ 搜索中…' : '🔄 刷新交易';
+  syncRefreshButtonsDisabled();
 }
 
 // ==================== BD & 并购：第二级 - 深挖分析 ====================
@@ -1094,6 +1130,7 @@ async function handlePasteParseSubmit() {
     document.getElementById('bdPasteInput').value = '';
     renderBdToolbar();
     populateBdCompanyFilter();
+    populateBdTypeFilter();
     renderBdDealList();
     setTimeout(closeBdPasteModal, 1500);
   } catch (err) {
@@ -1250,6 +1287,20 @@ function populateBdCompanyFilter() {
   if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
 }
 
+// 除 4 个标准类型外，把 normalizeDealType 未能识别、保留了原文的类型也加入下拉菜单，避免这些交易永远筛不到
+function populateBdTypeFilter() {
+  const select = document.getElementById('bdTypeFilter');
+  const currentValue = select.value;
+  const extraTypes = [...new Set((bdCacheData?.deals || [])
+    .map(d => d.deal_type)
+    .filter(t => t && t !== 'N/A' && !DEAL_TYPE_CANON.includes(t)))];
+  const extraOptionsHtml = extraTypes.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  select.innerHTML = '<option value="all">全部类型</option>' +
+    DEAL_TYPE_CANON.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('') +
+    extraOptionsHtml;
+  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
+}
+
 // ==================== Tab 切换 ====================
 
 function switchTab(tab) {
@@ -1265,7 +1316,8 @@ function switchTab(tab) {
     btn.classList.toggle('dark:text-slate-400', !active);
   });
   // 第一次切到 BD Tab 且本地无缓存时，自动触发一次交易搜索；否则缓存优先，手动点「刷新交易」
-  if (tab === 'bd' && !bdCacheData && !bdIsLoading) {
+  // 若市值板块正在刷新则跳过（两个板块的刷新互斥，避免并发抢占同一个 API 配额），之后再切一次 Tab 会重新判断
+  if (tab === 'bd' && !bdCacheData && !bdIsLoading && !isLoading) {
     refreshBdDeals();
   }
 }
@@ -1421,6 +1473,7 @@ function init() {
   bdDetailCache = loadBdDetailCache();
   renderBdToolbar();
   populateBdCompanyFilter();
+  populateBdTypeFilter();
   renderBdDealList();
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
