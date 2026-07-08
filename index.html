@@ -938,8 +938,8 @@ const DEAL_FIELDS = ['deal_id', 'date', 'pharma', 'partner', 'deal_type', 'asset
 function buildBdListMessages(batchCompanies) {
   const refDate = getReferenceDate();
   const companyNames = batchCompanies.map(c => c.name).join('、');
-  const sys = '你是一位医药行业资深 BD（商务拓展）分析师，擅长追踪药企的授权引进/授权引出/并购/战略合作交易。请基于联网搜索到的公开信息作答，不要编造交易，找不到就返回空数组。';
-  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"来源链接（无法确定真实链接就填N/A，不要编造）"}';
+  const sys = '你是一位医药行业资深 BD（商务拓展）分析师，擅长追踪药企的授权引进/授权引出/并购/战略合作交易。请基于联网搜索到的公开信息作答，不要编造交易，找不到就返回空数组。除公司名、产品名/药物代号等专有名词外，所有描述性文字（如 asset 字段）请用中文表达，哪怕信息源是英文。';
+  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"来源链接（无法确定真实链接就填N/A，不要编造）"}';
   const user = `请搜索以下药企在过去 ${CONFIG.BD_LOOKBACK_DAYS} 天内（以 ${refDate} 为基准日）达成的重大 BD 交易、License 合作、并购交易：\n${companyNames}\n\n优先参考来源：BioPharma Dive、FiercePharma、Reuters Health、SEC 8-K 文件、公司官方 Press Release；中文来源：医药魔方、动脉网、36氪医疗、上交所/深交所/港交所公告。\n\n请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n找不到任何交易就返回 {"deals": []}，不要编造。source_url 字段尤其重要：宁可填 N/A 也不要编造不存在的链接。不要有任何额外文字、不要使用 markdown 代码块。`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
@@ -947,8 +947,8 @@ function buildBdListMessages(batchCompanies) {
 // 用真实搜索结果（来自用户选择的搜索服务商）作为依据构造 prompt，要求模型只能依据这些结果作答，不得编造未出现的交易/链接
 function buildBdListMessagesGrounded(searchContext) {
   const refDate = getReferenceDate();
-  const sys = '你是一位医药行业资深 BD（商务拓展）分析师。下面会提供搜索引擎针对各家目标公司返回的真实网页搜索结果，请只依据这些搜索结果本身提取 BD 交易信息，不要使用搜索结果之外的知识编造交易，也不要使用未出现在搜索结果里的链接。某家公司如果没有搜到相关结果，就跳过它，不要编造。';
-  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD，无法从摘要判断就填N/A)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"必须是下面搜索结果里出现过的真实链接之一，不要编造或修改"}';
+  const sys = '你是一位医药行业资深 BD（商务拓展）分析师。下面会提供搜索引擎针对各家目标公司返回的真实网页搜索结果，请只依据这些搜索结果本身提取 BD 交易信息，不要使用搜索结果之外的知识编造交易，也不要使用未出现在搜索结果里的链接。某家公司如果没有搜到相关结果，就跳过它，不要编造。除公司名、产品名/药物代号等专有名词外，所有描述性文字（如 asset 字段）请用中文表达，哪怕搜索结果原文是英文。';
+  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD，无法从摘要判断就填N/A)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"必须是下面搜索结果里出现过的真实链接之一，不要编造或修改"}';
   const contextText = searchContext.map(c => {
     if (!c.results.length) return `【${c.company}】未搜到相关结果`;
     return `【${c.company}】\n` + c.results.map((r, i) => `${i + 1}. ${r.title}\n   链接：${r.url}\n   摘要：${r.snippet}`).join('\n');
@@ -1202,9 +1202,9 @@ function updateBdRefreshButtonState(loading) {
 // ==================== BD & 并购：第二级 - 深挖分析 ====================
 
 function buildDealDetailMessages(deal) {
-  const sys = '你是一位医药行业资深 BD 分析师，擅长解读交易逻辑与战略意图。';
-  const schema = '{"target_info":{"target":"靶点","indication":"适应症","phase":"研发阶段","mechanism":"作用机制"},"deal_terms":{"upfront":"首付款","milestones":["里程碑条款列表"],"royalty":"特许权使用费（如披露）"},"rationale":"为什么发生这笔交易？（100字内）","pricing_logic":"为什么值这个价格？（参考同类交易对比，100字内）","strategic_fit":"与收购方现有管线/战略的协同点（100字内）","risks":"潜在风险或值得关注的点（50字内）","sources":["来源URL列表，找不到真实来源就返回空数组，不要编造"]}';
-  const user = `请深度分析以下 BD 交易：\n交易方：${deal.pharma} × ${deal.partner}\n标的：${deal.asset}，类型：${deal.deal_type}，金额：${deal.upfront} 首付 / ${deal.total_value} 总额\n\n请搜索该交易的公开披露信息（SEC 8-K、公司公告、媒体报道），输出严格 JSON 对象，字段 schema：${schema}\n所有字段缺失信息填 "N/A"，不要编造具体数字或来源链接。不要有任何额外文字、不要使用 markdown 代码块。`;
+  const sys = '你是一位医药行业资深 BD 分析师，擅长解读交易逻辑与战略意图。除公司名、产品名/药物代号、靶点缩写等专有名词外，所有描述性文字请用中文表达，哪怕信息源是英文。';
+  const schema = '{"target_info":{"target":"靶点","indication":"适应症（中文）","phase":"研发阶段","mechanism":"作用机制（中文描述）"},"deal_terms":{"upfront":"首付款","milestones":["里程碑条款列表（中文描述）"],"royalty":"特许权使用费（如披露）"},"rationale":"为什么发生这笔交易？（中文，100字内）","pricing_logic":"为什么值这个价格？（中文，参考同类交易对比，100字内）","strategic_fit":"与收购方现有管线/战略的协同点（中文，100字内）","risks":"潜在风险或值得关注的点（中文，50字内）","sources":["来源URL列表，找不到真实来源就返回空数组，不要编造"]}';
+  const user = `请深度分析以下 BD 交易：\n交易方：${deal.pharma} × ${deal.partner}\n标的：${deal.asset}，类型：${deal.deal_type}，金额：${deal.upfront} 首付 / ${deal.total_value} 总额\n\n请搜索该交易的公开披露信息（SEC 8-K、公司公告、媒体报道），输出严格 JSON 对象，字段 schema：${schema}\n所有描述性字段请用中文作答；缺失信息填 "N/A"，不要编造具体数字或来源链接。不要有任何额外文字、不要使用 markdown 代码块。`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
@@ -1266,9 +1266,9 @@ async function handleDeepDive(dealId) {
 // ==================== BD & 并购：粘贴原文解析 ====================
 
 function buildPasteParseMessages(rawText) {
-  const sys = '你是一位医药行业资深 BD 分析师，擅长从文章中提取 BD 交易信息。';
-  const schema = '{"deal_id":"唯一标识（公司名+日期缩写）","date":"宣布日期(YYYY-MM-DD，无法确定就填N/A)","pharma":"药企方","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称","upfront":"首付款（未披露填N/A）","total_value":"交易总额（未披露填N/A）","source_url":"固定填 N/A（此来源为用户手动粘贴，无原始链接）"}';
-  const user = `请从下面这段文章原文中提取其中提到的所有 BD 交易信息（可能有多条），输出严格 JSON 对象：{"deals":[交易列表，字段如下]}，字段 schema：${schema}\n如果文章里没有任何 BD 交易信息，返回 {"deals":[]}。只提取原文中明确提到的信息，不要编造原文没有的内容。不要有任何额外文字、不要使用 markdown 代码块。\n\n文章原文：\n"""\n${rawText.slice(0, 8000)}\n"""`;
+  const sys = '你是一位医药行业资深 BD 分析师，擅长从文章中提取 BD 交易信息。除公司名、产品名/药物代号等专有名词外，所有描述性文字请用中文表达，哪怕原文是英文。';
+  const schema = '{"deal_id":"唯一标识（公司名+日期缩写）","date":"宣布日期(YYYY-MM-DD，无法确定就填N/A)","pharma":"药企方","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（未披露填N/A）","total_value":"交易总额（未披露填N/A）","source_url":"固定填 N/A（此来源为用户手动粘贴，无原始链接）"}';
+  const user = `请从下面这段文章原文中提取其中提到的所有 BD 交易信息（可能有多条），输出严格 JSON 对象：{"deals":[交易列表，字段如下]}，字段 schema：${schema}\n如果文章里没有任何 BD 交易信息，返回 {"deals":[]}。只提取原文中明确提到的信息，不要编造原文没有的内容；描述性字段请用中文表达，即使原文是英文。不要有任何额外文字、不要使用 markdown 代码块。\n\n文章原文：\n"""\n${rawText.slice(0, 8000)}\n"""`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
