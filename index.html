@@ -109,6 +109,7 @@
   <div id="bdSearchProgress" class="hidden mb-4">
     <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
       <span id="bdSearchProgressText">搜索中…</span>
+      <button id="bdPauseResumeBtn" class="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">⏸ 暂停</button>
     </div>
     <div class="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
       <div id="bdSearchProgressBar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 0%"></div>
@@ -259,8 +260,8 @@ const CONFIG = {
     { name: '中国生物制药', group: 'cn', aliases: ['Sino Biopharmaceutical', 'Sino Biopharm'] },
   ],
   BATCH_SIZE: 4,
-  REQUEST_TIMEOUT_MS: 60000,
-  TIMEOUT_RETRY_COUNT: 1,
+  REQUEST_TIMEOUT_MS: 90000,
+  TIMEOUT_RETRY_COUNT: 2,
   CACHE_KEY: 'pharma_intel_data',
   SETTINGS_KEY: 'pharma_intel_settings',
   THEME_KEY: 'pharma_intel_theme',
@@ -320,7 +321,9 @@ let bdFilterType = 'all';
 let bdIsLoading = false;
 let expandedDealId = null;      // 当前展开深挖详情的交易 id
 let bdLoadingDetailId = null;   // 正在请求深挖分析的交易 id
-let bdSearchProgress = null;    // { current, total, phase: 'searching' | 'analyzing' }，用于展示搜索进度条
+let bdSearchProgress = null;    // { current, total, phase: 'searching' | 'analyzing', companyName }，用于展示搜索进度条
+let bdIsPaused = false;         // 是否已暂停（在两家公司之间生效，不会打断正在进行中的请求）
+let bdPauseWaiters = [];        // 暂停期间挂起的 resolve 回调，点击继续时统一唤醒
 
 // ==================== 工具函数 ====================
 
@@ -330,6 +333,12 @@ function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// 展示层把内部用作"缺失数据"标记的 'N/A' 转换成更友好的中文提示；内部逻辑（如判断是否有来源链接）仍然基于原始的 'N/A' 字符串，不受影响
+function formatFieldValue(v) {
+  if (v === null || v === undefined || v === 'N/A' || v === '') return '待确认';
+  return v;
 }
 
 function chunkArray(arr, size) {
@@ -848,10 +857,10 @@ function cardHtml(company, data) {
     : '';
   const products = data.top_products.length
     ? data.top_products.map(p => `<li>${escapeHtml(p)}</li>`).join('')
-    : '<li class="text-slate-400">N/A</li>';
+    : '<li class="text-slate-400">待确认</li>';
   const pipeline = data.key_pipeline.length
     ? data.key_pipeline.map(p => `<li>${escapeHtml(p)}</li>`).join('')
-    : '<li class="text-slate-400">N/A</li>';
+    : '<li class="text-slate-400">待确认</li>';
 
   return `
     <div class="rounded-xl border ${errorRing} p-4 space-y-2 bg-white dark:bg-slate-800 flex flex-col">
@@ -861,10 +870,10 @@ function cardHtml(company, data) {
         <span class="text-xs px-2 py-0.5 rounded ${company.group === 'mnc' ? 'bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300' : 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300'}">${company.group === 'mnc' ? '国际MNC' : '国内'}</span>
       </div>
       <div class="text-xl font-extrabold flex items-center gap-1">
-        ${escapeHtml(data.market_cap)} <span class="${trend.cls} text-lg">${trend.symbol}</span>
+        ${escapeHtml(formatFieldValue(data.market_cap))} <span class="${trend.cls} text-lg">${trend.symbol}</span>
       </div>
-      <div class="text-sm text-slate-600 dark:text-slate-300">营收：${escapeHtml(data.revenue)}</div>
-      <div class="text-sm text-slate-600 dark:text-slate-300">净利润/EBITDA：${escapeHtml(data.net_profit)}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300">营收：${escapeHtml(formatFieldValue(data.revenue))}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300">净利润/EBITDA：${escapeHtml(formatFieldValue(data.net_profit))}</div>
       <div class="text-sm">
         <div class="font-medium text-slate-500 dark:text-slate-400 mb-0.5">Top 产品</div>
         <ul class="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-0.5">${products}</ul>
@@ -873,8 +882,8 @@ function cardHtml(company, data) {
         <div class="font-medium text-slate-500 dark:text-slate-400 mb-0.5">关键管线</div>
         <ul class="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-0.5">${pipeline}</ul>
       </div>
-      <div class="text-sm text-slate-600 dark:text-slate-300 flex-1">${escapeHtml(data.summary)}</div>
-      <div class="text-xs text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-700">数据截至：${escapeHtml(data.data_as_of)}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300 flex-1">${escapeHtml(formatFieldValue(data.summary))}</div>
+      <div class="text-xs text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-700">数据截至：${escapeHtml(formatFieldValue(data.data_as_of))}</div>
     </div>`;
 }
 
@@ -934,18 +943,28 @@ function saveBdDetailCacheToStorage(cache) {
 // ==================== BD & 并购：第一级 - 交易列表 ====================
 
 const DEAL_FIELDS = ['deal_id', 'date', 'pharma', 'partner', 'deal_type', 'asset', 'upfront', 'total_value', 'source_url'];
+const BD_MIN_LOOKBACK_DAYS = 7;
+const BD_LOOKBACK_BUFFER_DAYS = 3;
 
-function buildBdListMessages(batchCompanies) {
+// 回溯天数跟着上次刷新的间隔自适应缩小：刚刷新过没多久，这次只需要看这段间隔+缓冲天数；
+// 首次使用/隔太久没刷新，用 CONFIG.BD_LOOKBACK_DAYS（90天）兜底封顶，避免范围突然过大
+function computeBdLookbackDays() {
+  if (!bdCacheData || !bdCacheData.updatedAt) return CONFIG.BD_LOOKBACK_DAYS;
+  const gap = Math.ceil(daysSince(bdCacheData.updatedAt)) + BD_LOOKBACK_BUFFER_DAYS;
+  return Math.min(CONFIG.BD_LOOKBACK_DAYS, Math.max(BD_MIN_LOOKBACK_DAYS, gap));
+}
+
+function buildBdListMessages(batchCompanies, lookbackDays) {
   const refDate = getReferenceDate();
   const companyNames = batchCompanies.map(c => c.name).join('、');
   const sys = '你是一位医药行业资深 BD（商务拓展）分析师，擅长追踪药企的授权引进/授权引出/并购/战略合作交易。请基于联网搜索到的公开信息作答，不要编造交易，找不到就返回空数组。除公司名、产品名/药物代号等专有名词外，所有描述性文字（如 asset 字段）请用中文表达，哪怕信息源是英文。';
   const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"来源链接（无法确定真实链接就填N/A，不要编造）"}';
-  const user = `请搜索以下药企在过去 ${CONFIG.BD_LOOKBACK_DAYS} 天内（以 ${refDate} 为基准日）达成的重大 BD 交易、License 合作、并购交易：\n${companyNames}\n\n优先参考来源：BioPharma Dive、FiercePharma、Reuters Health、SEC 8-K 文件、公司官方 Press Release；中文来源：医药魔方、动脉网、36氪医疗、上交所/深交所/港交所公告。\n\n请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n找不到任何交易就返回 {"deals": []}，不要编造。source_url 字段尤其重要：宁可填 N/A 也不要编造不存在的链接。不要有任何额外文字、不要使用 markdown 代码块。`;
+  const user = `请搜索以下药企在过去 ${lookbackDays} 天内（以 ${refDate} 为基准日）达成的重大 BD 交易、License 合作、并购交易：\n${companyNames}\n\n优先参考来源：BioPharma Dive、FiercePharma、Reuters Health、SEC 8-K 文件、公司官方 Press Release；中文来源：医药魔方、动脉网、36氪医疗、上交所/深交所/港交所公告。\n\n请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n找不到任何交易就返回 {"deals": []}，不要编造。source_url 字段尤其重要：宁可填 N/A 也不要编造不存在的链接。不要有任何额外文字、不要使用 markdown 代码块。`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
 // 用真实搜索结果（来自用户选择的搜索服务商）作为依据构造 prompt，要求模型只能依据这些结果作答，不得编造未出现的交易/链接
-function buildBdListMessagesGrounded(searchContext) {
+function buildBdListMessagesGrounded(searchContext, lookbackDays) {
   const refDate = getReferenceDate();
   const sys = '你是一位医药行业资深 BD（商务拓展）分析师。下面会提供搜索引擎针对各家目标公司返回的真实网页搜索结果，请只依据这些搜索结果本身提取 BD 交易信息，不要使用搜索结果之外的知识编造交易，也不要使用未出现在搜索结果里的链接。某家公司如果没有搜到相关结果，就跳过它，不要编造。除公司名、产品名/药物代号等专有名词外，所有描述性文字（如 asset 字段）请用中文表达，哪怕搜索结果原文是英文。';
   const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD，无法从摘要判断就填N/A)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"必须是下面搜索结果里出现过的真实链接之一，不要编造或修改"}';
@@ -953,7 +972,7 @@ function buildBdListMessagesGrounded(searchContext) {
     if (!c.results.length) return `【${c.company}】未搜到相关结果`;
     return `【${c.company}】\n` + c.results.map((r, i) => `${i + 1}. ${r.title}\n   链接：${r.url}\n   摘要：${r.snippet}`).join('\n');
   }).join('\n\n');
-  const user = `以下是针对各目标公司的搜索引擎结果（基准日 ${refDate}，仅代表搜索快照，不代表真实发生时间一定在90天内，请结合摘要内容自行判断是否为近期交易）：\n\n${contextText}\n\n请从上述搜索结果中提取重大 BD 交易、License 合作、并购交易信息，只使用出现在搜索结果里的信息和链接，不要编造。请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n没有找到任何交易就返回 {"deals": []}。不要有任何额外文字、不要使用 markdown 代码块。`;
+  const user = `以下是针对各目标公司的搜索引擎结果（基准日 ${refDate}，仅代表搜索快照，不代表真实发生时间一定在 ${lookbackDays} 天内，请结合摘要内容自行判断是否为近期交易）：\n\n${contextText}\n\n请从上述搜索结果中提取重大 BD 交易、License 合作、并购交易信息，只使用出现在搜索结果里的信息和链接，不要编造。请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n没有找到任何交易就返回 {"deals": []}。不要有任何额外文字、不要使用 markdown 代码块。`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
@@ -1026,6 +1045,10 @@ async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
   const results = [];
   const partialErrors = [];
   for (const c of batch) {
+    if (bdSearchProgress) {
+      bdSearchProgress = { ...bdSearchProgress, phase: 'searching', companyName: c.name };
+      renderBdSearchProgress();
+    }
     try {
       const query = `${c.name} license agreement OR acquisition OR partnership BD deal 2026`;
       const r = await searchWeb(query, providerId, apiKey);
@@ -1035,7 +1058,7 @@ async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
       partialErrors.push(`${c.name}: ${err.message}`);
     }
     if (bdSearchProgress) {
-      bdSearchProgress = { ...bdSearchProgress, current: bdSearchProgress.current + 1, phase: 'searching' };
+      bdSearchProgress = { ...bdSearchProgress, current: bdSearchProgress.current + 1 };
       renderBdSearchProgress();
     }
     await sleep(1100); // 避免触发搜索服务商免费额度的每秒请求限制
@@ -1084,25 +1107,37 @@ function generateDealId(record) {
 }
 
 // 处理一小批（默认 1 家）公司：先搜索（若配置了搜索 Key）再让大模型基于这批公司提取交易
-async function fetchBdDealsForBatch(batch, s) {
+async function fetchBdDealsForBatch(batch, s, lookbackDays) {
   let messages;
   let partialErrors = [];
+  let llmSettings = s;
   if (s.searchApiKey) {
     const context = await gatherBdSearchContextForBatch(batch, s.searchProvider, s.searchApiKey);
-    messages = buildBdListMessagesGrounded(context.results);
+    messages = buildBdListMessagesGrounded(context.results, lookbackDays);
     partialErrors = context.partialErrors;
+    // 已经用真实搜索结果 grounded 过了，模型没必要再自己联网搜一遍——两者叠加只会显著拖慢速度、更容易超时
+    llmSettings = { ...s, webSearchEnabled: false };
     if (bdSearchProgress) {
       bdSearchProgress = { ...bdSearchProgress, phase: 'analyzing' };
       renderBdSearchProgress();
     }
   } else {
-    messages = buildBdListMessages(batch);
+    messages = buildBdListMessages(batch, lookbackDays);
+    if (bdSearchProgress) {
+      bdSearchProgress = { ...bdSearchProgress, phase: 'analyzing', companyName: batch.map(c => c.name).join('、') };
+      renderBdSearchProgress();
+    }
   }
 
-  const parsed = await callLLM(messages, s);
+  const parsed = await callLLM(messages, llmSettings);
   const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.deals) ? parsed.deals : null);
   if (!list) {
     const err = new Error('JSON 结构不符合预期（缺少 deals 数组）'); err.type = 'parse_error'; err.raw = JSON.stringify(parsed); throw err;
+  }
+  // 非联网搜索路径没有 gatherBdSearchContextForBatch 帮忙推进进度，这里补一次；grounded 路径已经在检索阶段按公司推进过了
+  if (!s.searchApiKey && bdSearchProgress) {
+    bdSearchProgress = { ...bdSearchProgress, current: bdSearchProgress.current + batch.length };
+    renderBdSearchProgress();
   }
   return { deals: list.map(d => normalizeDealRecord(d, 'auto')), partialErrors };
 }
@@ -1141,9 +1176,9 @@ function sortDealsByDateDesc(deals) {
 
 // 处理一小批公司：成功则把结果累加进 newlyFetchedDeals 并立刻合并渲染；超时且批次可再拆分时对半拆开分别重试
 // previousDeals 是刷新开始前的快照（保持不变，用于跟每次新结果重新合并），newlyFetchedDeals 是跨批次累加的新结果
-async function processBdBatch(batch, previousDeals, newlyFetchedDeals) {
+async function processBdBatch(batch, previousDeals, newlyFetchedDeals, lookbackDays) {
   try {
-    const { deals, partialErrors } = await fetchBdDealsForBatch(batch, settings);
+    const { deals, partialErrors } = await fetchBdDealsForBatch(batch, settings, lookbackDays);
     newlyFetchedDeals.push(...deals);
     if (partialErrors && partialErrors.length) {
       bdErrorMessages.push(`部分公司的资讯检索失败（已跳过，不影响其他公司）：${partialErrors.slice(0, 3).join('；')}${partialErrors.length > 3 ? ' 等' : ''}`);
@@ -1151,8 +1186,8 @@ async function processBdBatch(batch, previousDeals, newlyFetchedDeals) {
   } catch (err) {
     if (err.type === 'timeout' && batch.length > 1) {
       const mid = Math.ceil(batch.length / 2);
-      await processBdBatch(batch.slice(0, mid), previousDeals, newlyFetchedDeals);
-      await processBdBatch(batch.slice(mid), previousDeals, newlyFetchedDeals);
+      await processBdBatch(batch.slice(0, mid), previousDeals, newlyFetchedDeals, lookbackDays);
+      await processBdBatch(batch.slice(mid), previousDeals, newlyFetchedDeals, lookbackDays);
       return;
     }
     const names = batch.map(c => c.name).join('、');
@@ -1170,24 +1205,46 @@ async function processBdBatch(batch, previousDeals, newlyFetchedDeals) {
   renderBdDealList();
 }
 
+// 暂停/继续：暂停只在两家公司之间生效，不会打断正在进行中的请求
+function togglePauseBdSearch() {
+  bdIsPaused = !bdIsPaused;
+  if (!bdIsPaused) {
+    const waiters = bdPauseWaiters;
+    bdPauseWaiters = [];
+    waiters.forEach(resolve => resolve());
+  }
+  renderBdSearchProgress();
+}
+
+function waitIfBdPaused() {
+  if (!bdIsPaused) return Promise.resolve();
+  return new Promise(resolve => { bdPauseWaiters.push(resolve); });
+}
+
 async function refreshBdDeals() {
   if (bdIsLoading || isLoading) return;
   bdIsLoading = true;
+  bdIsPaused = false;
+  bdPauseWaiters = [];
   bdErrorMessages = [];
-  bdSearchProgress = settings.searchApiKey ? { current: 0, total: CONFIG.COMPANIES.length, phase: 'searching' } : null;
+  bdSearchProgress = { current: 0, total: CONFIG.COMPANIES.length, phase: settings.searchApiKey ? 'searching' : 'analyzing', companyName: '' };
   renderBdErrorBanner();
   renderBdSearchProgress();
   updateBdRefreshButtonState(true);
   renderBdDealList();
 
+  // 必须在任何批次开始改写 bdCacheData.updatedAt 之前算好，否则跑到第二家公司时"距离上次刷新"就会被误判成"刚刚"
+  const lookbackDays = computeBdLookbackDays();
   const previousDeals = bdCacheData?.deals || [];
   const newlyFetchedDeals = [];
   const batches = chunkArray(CONFIG.COMPANIES, CONFIG.BD_BATCH_SIZE);
   for (const batch of batches) {
-    await processBdBatch(batch, previousDeals, newlyFetchedDeals);
+    await waitIfBdPaused();
+    await processBdBatch(batch, previousDeals, newlyFetchedDeals, lookbackDays);
   }
 
   bdSearchProgress = null;
+  bdIsPaused = false;
   bdIsLoading = false;
   updateBdRefreshButtonState(false);
   renderBdSearchProgress();
@@ -1360,25 +1417,25 @@ function dealDetailBlockHtml(dealId) {
   }
   const milestones = detail.deal_terms.milestones.length
     ? detail.deal_terms.milestones.map(m => `<li>${escapeHtml(m)}</li>`).join('')
-    : '<li class="text-slate-400">N/A</li>';
+    : '<li class="text-slate-400">待确认</li>';
   const sources = detail.sources.length
     ? detail.sources.map(u => `<a href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline block truncate">${escapeHtml(u)}</a>`).join('')
-    : '<div class="text-slate-400">N/A</div>';
+    : '<div class="text-slate-400">待确认</div>';
   return `
     <div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3 text-sm">
       <div>
         <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">📋 交易条款</div>
         <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
-          <div>靶点：${escapeHtml(detail.target_info.target)} ｜ 适应症：${escapeHtml(detail.target_info.indication)} ｜ 阶段：${escapeHtml(detail.target_info.phase)}</div>
-          <div>作用机制：${escapeHtml(detail.target_info.mechanism)}</div>
-          <div>首付款：${escapeHtml(detail.deal_terms.upfront)} ｜ 特许权使用费：${escapeHtml(detail.deal_terms.royalty)}</div>
+          <div>靶点：${escapeHtml(formatFieldValue(detail.target_info.target))} ｜ 适应症：${escapeHtml(formatFieldValue(detail.target_info.indication))} ｜ 阶段：${escapeHtml(formatFieldValue(detail.target_info.phase))}</div>
+          <div>作用机制：${escapeHtml(formatFieldValue(detail.target_info.mechanism))}</div>
+          <div>首付款：${escapeHtml(formatFieldValue(detail.deal_terms.upfront))} ｜ 特许权使用费：${escapeHtml(formatFieldValue(detail.deal_terms.royalty))}</div>
           <div>里程碑条款：<ul class="list-disc list-inside">${milestones}</ul></div>
         </div>
       </div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💡 交易逻辑</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.rationale)}</div></div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💰 定价分析</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.pricing_logic)}</div></div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🔗 战略协同</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.strategic_fit)}</div></div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">⚠️ 风险提示</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(detail.risks)}</div></div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💡 交易逻辑</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.rationale))}</div></div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💰 定价分析</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.pricing_logic))}</div></div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🔗 战略协同</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.strategic_fit))}</div></div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">⚠️ 风险提示</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.risks))}</div></div>
       <div>
         <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">来源</div>
         <div class="space-y-0.5">${sources}</div>
@@ -1401,8 +1458,8 @@ function dealCardHtml(deal) {
         <button data-deep-dive="${escapeHtml(deal.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-medium shrink-0">🔍 深挖分析</button>
       </div>
       <div class="mt-2 font-bold">${escapeHtml(deal.pharma)} × ${escapeHtml(deal.partner)}</div>
-      <div class="text-sm text-slate-600 dark:text-slate-300 mt-1">标的：${escapeHtml(deal.asset)}</div>
-      <div class="text-sm text-slate-600 dark:text-slate-300">首付款：${escapeHtml(deal.upfront)} ｜ 总额：${escapeHtml(deal.total_value)}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300 mt-1">标的：${escapeHtml(formatFieldValue(deal.asset))}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300">首付款：${escapeHtml(formatFieldValue(deal.upfront))} ｜ 总额：${escapeHtml(formatFieldValue(deal.total_value))}</div>
       ${hasSourceUrl ? `<a href="${escapeHtml(deal.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(deal.source_url)}</a>` : ''}
       ${isExpanded ? dealDetailBlockHtml(deal.deal_id) : ''}
     </div>`;
@@ -1447,21 +1504,27 @@ function renderBdErrorBanner() {
   `).join('');
 }
 
-// 展示"检索第几家公司/AI 分析中"的搜索进度条；bdSearchProgress 为 null 时隐藏
+// 展示"检索第几家公司/AI 分析中"的搜索进度条 + 暂停按钮状态；bdSearchProgress 为 null 时隐藏
 function renderBdSearchProgress() {
   const container = document.getElementById('bdSearchProgress');
+  const pauseBtn = document.getElementById('bdPauseResumeBtn');
   if (!bdSearchProgress) { container.classList.add('hidden'); return; }
   container.classList.remove('hidden');
-  const { current, total, phase } = bdSearchProgress;
+  const { current, total, phase, companyName } = bdSearchProgress;
   const bar = document.getElementById('bdSearchProgressBar');
   const text = document.getElementById('bdSearchProgressText');
+  pauseBtn.textContent = bdIsPaused ? '▶ 继续' : '⏸ 暂停';
+  if (bdIsPaused) {
+    text.textContent = `⏸ 已暂停（${companyName ? '下一家：' + companyName + '，' : ''}${current}/${total}）`;
+    return;
+  }
   if (phase === 'analyzing') {
     bar.style.width = '100%';
-    text.textContent = '🤖 AI 正在分析交易信息…';
+    text.textContent = `🤖 AI 正在分析：${companyName || ''}（${current}/${total}）`;
   } else {
     const pct = total ? Math.round((current / total) * 100) : 0;
     bar.style.width = `${pct}%`;
-    text.textContent = `🔍 正在检索真实资讯：${current}/${total} 家公司`;
+    text.textContent = `🔍 正在检索：${companyName || ''}（${current}/${total}）`;
   }
 }
 
@@ -1685,6 +1748,7 @@ function init() {
   });
 
   document.getElementById('bdRefreshBtn').addEventListener('click', refreshBdDeals);
+  document.getElementById('bdPauseResumeBtn').addEventListener('click', togglePauseBdSearch);
   document.getElementById('bdPasteParseBtn').addEventListener('click', openBdPasteModal);
   document.getElementById('closeBdPasteModalBtn').addEventListener('click', closeBdPasteModal);
   document.getElementById('bdPasteParseSubmitBtn').addEventListener('click', handlePasteParseSubmit);
