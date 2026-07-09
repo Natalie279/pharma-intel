@@ -95,6 +95,7 @@
       <span id="bdLastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
       <span id="bdLookbackText" class="text-xs text-slate-400"></span>
       <button id="bdRefreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新交易</button>
+      <button id="bdClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空并重新检索</button>
       <select id="bdLookbackModeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="auto">搜索范围：自动</option>
         <option value="7">过去 7 天</option>
@@ -156,6 +157,7 @@
       <span id="aiLastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
       <span id="aiLookbackText" class="text-xs text-slate-400"></span>
       <button id="aiRefreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新 AI 合作</button>
+      <button id="aiClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空并重新检索</button>
       <select id="aiLookbackModeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="auto">搜索范围：自动</option>
         <option value="7">过去 7 天</option>
@@ -958,6 +960,8 @@ function syncRefreshButtonsDisabled() {
   document.getElementById('refreshBtn').disabled = busy;
   document.getElementById('bdRefreshBtn').disabled = busy;
   document.getElementById('aiRefreshBtn').disabled = busy;
+  document.getElementById('bdClearRefreshBtn').disabled = busy;
+  document.getElementById('aiClearRefreshBtn').disabled = busy;
 }
 
 // ==================== 渲染 ====================
@@ -1897,6 +1901,21 @@ function updateBdRefreshButtonState(loading) {
   const btn = document.getElementById('bdRefreshBtn');
   btn.textContent = loading ? '⏳ 搜索中…' : '🔄 刷新交易';
   syncRefreshButtonsDisabled();
+}
+
+// 清空当前已缓存的交易/深挖详情/检索诊断后再触发一次完整重新检索；与「🔄 刷新交易」的增量合并不同，
+// 这里会先丢弃旧记录，避免旧格式字段、误判交易或过期数据在合并中一直残留
+function handleBdClearAndRefresh() {
+  if (bdIsLoading || isLoading || aiIsLoading) return;
+  if (!confirm('确定要清空当前已缓存的 BD 交易记录并重新检索吗？此操作不可撤销。')) return;
+  bdCacheData = null;
+  bdDetailCache = {};
+  bdSearchDiagnostics = null;
+  expandedDealId = null;
+  bdBackcheckLoadingId = null;
+  localStorage.removeItem(CONFIG.BD_CACHE_KEY);
+  saveBdDetailCacheToStorage(bdDetailCache);
+  refreshBdDeals();
 }
 
 // ==================== BD & 并购：第二级 - 深挖分析 ====================
@@ -2921,6 +2940,20 @@ function updateAiRefreshButtonState(loading) {
   syncRefreshButtonsDisabled();
 }
 
+// 清空当前已缓存的合作记录/深挖详情/检索诊断后再触发一次完整重新检索，逻辑同 handleBdClearAndRefresh
+function handleAiClearAndRefresh() {
+  if (aiIsLoading || isLoading || bdIsLoading) return;
+  if (!confirm('确定要清空当前已缓存的 AI 合作记录并重新检索吗？此操作不可撤销。')) return;
+  aiCollabCacheData = null;
+  aiCollabDetailCache = {};
+  aiSearchDiagnostics = null;
+  expandedAiCollabId = null;
+  aiBackcheckLoadingId = null;
+  localStorage.removeItem(CONFIG.AI_COLLAB_CACHE_KEY);
+  saveAiCollabDetailCacheToStorage(aiCollabDetailCache);
+  refreshAiCollabs();
+}
+
 // ==================== AI合作：第二级 - 深挖分析 ====================
 
 function buildAiCollabDetailMessages(collab) {
@@ -3597,6 +3630,7 @@ function init() {
   });
 
   document.getElementById('bdRefreshBtn').addEventListener('click', refreshBdDeals);
+  document.getElementById('bdClearRefreshBtn').addEventListener('click', handleBdClearAndRefresh);
   document.getElementById('bdPauseResumeBtn').addEventListener('click', togglePauseBdSearch);
   document.getElementById('bdPasteParseBtn').addEventListener('click', openBdPasteModal);
   document.getElementById('closeBdPasteModalBtn').addEventListener('click', closeBdPasteModal);
@@ -3624,6 +3658,7 @@ function init() {
   renderAiCollabCards();
 
   document.getElementById('aiRefreshBtn').addEventListener('click', refreshAiCollabs);
+  document.getElementById('aiClearRefreshBtn').addEventListener('click', handleAiClearAndRefresh);
   document.getElementById('aiPauseResumeBtn').addEventListener('click', togglePauseAiSearch);
   document.getElementById('aiPasteParseBtn').addEventListener('click', openAiPasteModal);
   document.getElementById('closeAiPasteModalBtn').addEventListener('click', closeAiPasteModal);
