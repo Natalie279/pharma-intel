@@ -34,6 +34,7 @@
     <button data-tab="market" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400">市值与财务</button>
     <button data-tab="bd" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 dark:text-slate-400">BD&amp;并购</button>
     <button data-tab="ai" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 dark:text-slate-400">AI合作</button>
+    <button data-tab="push" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 dark:text-slate-400">飞书推送</button>
   </div>
 </header>
 
@@ -204,6 +205,89 @@
   <div id="aiCollabGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start"></div>
 </div>
 
+<!-- ---------- Tab 四：飞书推送 ---------- -->
+<div id="tabPanel-push" class="hidden">
+
+  <div class="mb-4 px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-200 text-sm">
+    💡 飞书推送只包含高价值事件，完整结果请回到看板查询。候选内容基于 BD&并购、AI合作、市值异动板块已有的本地缓存数据，按前端规则筛选生成，不会重新调用大模型。
+  </div>
+
+  <div id="pushErrorBanner" class="mb-4 space-y-2"></div>
+
+  <div class="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-white dark:bg-slate-800 space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">推送周期</label>
+        <select id="pushPeriodSelect" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+          <option value="auto">自动识别今日</option>
+          <option value="mon">周一更新</option>
+          <option value="wed">周三更新</option>
+          <option value="fri">周五更新</option>
+          <option value="custom">自定义</option>
+        </select>
+        <div id="pushPeriodDesc" class="text-xs text-slate-400 mt-1"></div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">覆盖时间</label>
+        <select id="pushRangeSelect" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+          <option value="auto">自动（按推送周期决定）</option>
+          <option value="2">过去 2 天</option>
+          <option value="3">过去 3 天</option>
+          <option value="7">过去 7 天</option>
+          <option value="all">全部缓存</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">最大推送条数</label>
+        <select id="pushMaxItemsSelect" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="15">15</option>
+        </select>
+      </div>
+    </div>
+    <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-white dark:bg-slate-800 space-y-3">
+      <div>
+        <label class="block text-sm font-medium mb-2">推送内容</label>
+        <div class="flex flex-wrap gap-3 text-sm">
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="pushCategoryBd" checked>BD&并购</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="pushCategoryAi" checked>AI合作</label>
+          <label class="flex items-center gap-1.5"><input type="checkbox" id="pushCategoryAlert" checked>公司异动</label>
+        </div>
+      </div>
+      <button id="pushRegenerateBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">🔄 重新生成候选与文案</button>
+      <div class="text-xs text-slate-400">候选内容仅来自本地已缓存的 BD&并购/AI合作/市值异动数据；如果这些板块还没有刷新过，这里也不会有内容。</div>
+    </div>
+  </div>
+
+  <div class="mb-4">
+    <h3 class="text-sm font-bold mb-2">候选事件</h3>
+    <div id="pushCandidateList" class="space-y-3"></div>
+  </div>
+
+  <div class="mb-4">
+    <h3 class="text-sm font-bold mb-2">飞书文案预览（可手动编辑）</h3>
+    <textarea id="pushTextPreview" rows="14" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-mono"></textarea>
+    <div class="flex flex-wrap gap-2 mt-2">
+      <button id="pushRegenerateTextBtn" class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium">🔄 重新生成文案</button>
+      <button id="pushCopyBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">📋 一键复制</button>
+      <button id="pushMarkPushedBtn" class="px-4 py-2 rounded-lg border border-emerald-300 dark:border-emerald-600 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-sm font-medium">✅ 标记为已推送</button>
+      <button id="pushSendWebhookBtn" class="px-4 py-2 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 text-sm font-medium">🚀 推送到飞书 Webhook</button>
+    </div>
+    <div id="pushActionStatus" class="text-sm h-5 mt-1"></div>
+  </div>
+
+  <div class="mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-sm font-bold">推送记录</h3>
+      <button id="pushClearHistoryBtn" class="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400">清除记录</button>
+    </div>
+    <div class="text-xs text-slate-400 mb-2">当前推送记录仅保存在本机浏览器，清除缓存或更换设备后会丢失。正式团队协作需要后端数据库。</div>
+    <div id="pushHistoryList" class="space-y-2 text-sm"></div>
+  </div>
+
+</div>
+
 </main>
 
 <!-- ==================== 设置侧滑面板 ==================== -->
@@ -274,6 +358,29 @@
       </div>
       <button id="saveAlertRulesBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">保存异动阈值</button>
       <div id="saveAlertRulesStatus" class="text-sm h-5"></div>
+    </div>
+
+    <hr class="border-slate-200 dark:border-slate-700">
+
+    <div class="space-y-3">
+      <h3 class="text-sm font-bold">🚀 飞书 Webhook（可选）</h3>
+      <div class="px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-xs">
+        ⚠️ Webhook URL 保存在本地浏览器中，仅适合内部测试。正式自动推送建议改为后端或 Serverless 调用 Webhook，以避免 Webhook 暴露。当前不支持飞书签名校验，若群机器人开启了"签名校验"请先关闭，否则推送会失败。
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">飞书自定义机器人 Webhook URL</label>
+        <input id="feishuWebhookUrlInput" type="text" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Webhook Secret（暂未使用，仅供后续接入后端时参考保存）</label>
+        <input id="feishuWebhookSecretInput" type="password" placeholder="可留空" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+      </div>
+      <div class="flex items-center gap-2">
+        <input id="feishuWebhookEnabledCheckbox" type="checkbox" class="shrink-0">
+        <label for="feishuWebhookEnabledCheckbox" class="text-sm">启用 Webhook 推送（「飞书推送」Tab 中的推送按钮才会可用）</label>
+      </div>
+      <button id="saveFeishuWebhookBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">保存飞书设置</button>
+      <div id="saveFeishuWebhookStatus" class="text-sm h-5"></div>
     </div>
 
     <hr class="border-slate-200 dark:border-slate-700">
@@ -451,7 +558,24 @@ const CONFIG = {
     riskKeywords: ['降级', '诉讼', '召回', '下调', '暂停', '警告'],
   },
   FIELDS: ['company', 'display_name', 'market_cap', 'market_cap_trend', 'revenue', 'net_profit', 'top_products', 'key_pipeline', 'data_as_of', 'summary'],
+  // ---- 飞书推送板块 ----
+  PUSH_CACHE_KEY: 'pharma_intel_push_history',
+  PUSH_MAX_ITEMS_DEFAULT: 10,
+  PUSH_MAX_ITEMS_OPTIONS: [5, 10, 15],
+  PUSH_PRIORITY_LEVELS: ['high', 'medium'],
+  PUSH_CATEGORIES: ['BD&并购', 'AI合作', '公司异动'],
+  FEISHU_WEBHOOK_KEY: 'pharma_intel_feishu_webhook',
+  // 推送节奏：周一/周三/周五隔日更新；label 用于 UI 展示，coverageDays 用于「自动」覆盖时间兜底（周一覆盖周末，其余覆盖2天）
+  PUSH_PERIODS: [
+    { id: 'mon', weekday: 1, label: '周一更新', desc: '覆盖周五后至周一的新事件，包含周末补充和本周关注', coverageDays: 3 },
+    { id: 'wed', weekday: 3, label: '周三更新', desc: '覆盖周一至周三的新事件，推本周中段重点动态', coverageDays: 2 },
+    { id: 'fri', weekday: 5, label: '周五更新', desc: '覆盖周三至周五的新事件，并增加本周重点回顾', coverageDays: 2 },
+    { id: 'custom', weekday: null, label: '自定义', desc: '手动选择覆盖时间范围', coverageDays: null },
+  ],
 };
+
+// 飞书推送板块的看板入口链接：文案末尾提示"进入看板查看更多"，取当前页面地址
+CONFIG.PUSH_DEFAULT_DASHBOARD_URL = window.location.href;
 
 // ==================== 全局状态 ====================
 let settings = null;          // { baseUrl, apiKey, modelName, webSearchEnabled }
@@ -503,6 +627,18 @@ let aiPauseWaiters = [];
 let aiSearchDiagnostics = null; // 本次刷新的检索诊断（见 createEmptySearchDiagnostics）
 let aiBackcheckLoadingId = null; // 正在反查官方来源的合作 id
 let aiAbortRequested = false;   // 由 ensureAiIdle() 设置，用于安全中止一个暂停中/进行中的旧刷新循环
+
+// ---- 飞书推送板块状态 ----
+let pushHistory = null;         // { pushes: [...], pushed_item_ids: [...] }，见 loadPushHistory()
+let feishuWebhookSettings = null; // { url, secret, enabled }
+let pushPeriodMode = 'auto';    // 'auto' | 'mon' | 'wed' | 'fri' | 'custom'
+let pushRangeMode = 'auto';     // 'auto' | '2' | '3' | '7' | 'all'
+let pushCategoryToggles = { 'BD&并购': true, 'AI合作': true, '公司异动': true };
+let pushMaxItems = CONFIG.PUSH_MAX_ITEMS_DEFAULT;
+let pushCandidates = [];        // 最近一次 buildPushCandidates() 的结果（未经用户取消勾选前的全量候选）
+let pushSelectedIds = new Set(); // 当前勾选（将被写入文案）的候选 id 集合
+let pushGeneratedText = '';     // 当前文案预览内容；用户可手动编辑，编辑后与"重新生成"的结果分离
+let pushErrorMessages = [];     // 推送 Tab 的错误提示（如 Webhook 发送失败）
 
 // ==================== 工具函数 ====================
 
@@ -663,6 +799,43 @@ function loadAlertRules() {
 
 function saveAlertRulesToStorage(rules) {
   localStorage.setItem(CONFIG.ALERT_RULES_KEY, JSON.stringify(rules));
+}
+
+// 推送记录仅保存在本机浏览器，用于"已推送事件下次默认不再勾选" + UI 展示最近几次推送
+function loadPushHistory() {
+  const raw = localStorage.getItem(CONFIG.PUSH_CACHE_KEY);
+  const fallback = { pushes: [], pushed_item_ids: [] };
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      pushes: Array.isArray(parsed.pushes) ? parsed.pushes : [],
+      pushed_item_ids: Array.isArray(parsed.pushed_item_ids) ? parsed.pushed_item_ids : [],
+    };
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function savePushHistory(history) {
+  localStorage.setItem(CONFIG.PUSH_CACHE_KEY, JSON.stringify(history));
+}
+
+// 飞书 Webhook 配置：URL/Secret 保存在本地浏览器，仅适合内部测试（见设置面板中的安全提示）
+function loadFeishuWebhookSettings() {
+  const raw = localStorage.getItem(CONFIG.FEISHU_WEBHOOK_KEY);
+  const fallback = { url: '', secret: '', enabled: false };
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return { url: parsed.url || '', secret: parsed.secret || '', enabled: !!parsed.enabled };
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function saveFeishuWebhookSettings(settingsObj) {
+  localStorage.setItem(CONFIG.FEISHU_WEBHOOK_KEY, JSON.stringify(settingsObj));
 }
 
 // ==================== LLM 调用 ====================
@@ -3511,12 +3684,567 @@ function populateAiSourceTierFilter() {
   if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
 }
 
+// ==================== 飞书推送：推送节奏与覆盖时间 ====================
+
+// 返回全部推送周期项，并标记"今天对应哪个自动节奏"（今天不是周一/三/五时，自动模式退化为"自定义"）
+function getPushPeriodOptions() {
+  const todayWeekday = new Date().getDay(); // 0=周日 1=周一 ... 3=周三 5=周五
+  const autoMatch = CONFIG.PUSH_PERIODS.find(p => p.weekday === todayWeekday);
+  return { periods: CONFIG.PUSH_PERIODS, autoPeriodId: autoMatch ? autoMatch.id : 'custom' };
+}
+
+// 把 periodMode + rangeMode 换算成 [起始日期, 今天] 的 Date 区间；rangeMode='all' 时 start=null 代表不限制（全部缓存）
+function computePushDateRange(periodMode, rangeMode) {
+  const end = new Date();
+  if (rangeMode && rangeMode !== 'auto') {
+    if (rangeMode === 'all') return { start: null, end };
+    const start = new Date();
+    start.setDate(start.getDate() - Number(rangeMode));
+    return { start, end };
+  }
+  // rangeMode='auto'：按推送节奏的 coverageDays 兜底（自定义节奏没有固定天数，退化为3天）
+  const { autoPeriodId } = getPushPeriodOptions();
+  const effectivePeriodId = (!periodMode || periodMode === 'auto') ? autoPeriodId : periodMode;
+  const period = CONFIG.PUSH_PERIODS.find(p => p.id === effectivePeriodId) || CONFIG.PUSH_PERIODS.find(p => p.id === 'custom');
+  const coverageDays = period.coverageDays || 3;
+  const start = new Date();
+  start.setDate(start.getDate() - coverageDays);
+  return { start, end };
+}
+
+// 日期字符串是否落在 [start, end] 区间内；date 为 N/A/无法解析时不进入推送（推送要求日期明确，比网页看板更严格）
+function isDateWithinPushRange(dateStr, start, end) {
+  if (!dateStr || dateStr === 'N/A') return false;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return false;
+  if (start && d < start) return false;
+  if (end && d > end) return false;
+  return true;
+}
+
+// ==================== 飞书推送：优先级判定 ====================
+
+function isMncCompanyName(name) {
+  const c = CONFIG.COMPANIES.find(c => c.name === name);
+  return c ? c.group === 'mnc' : false;
+}
+
+// partner/ai_partner 是否"看起来"是中国公司或biotech：命中目标公司列表里的国内分组，或名称本身含中文
+function looksLikeChinaOrBiotechPartner(name) {
+  if (!name || name === 'N/A') return false;
+  const matched = CONFIG.COMPANIES.find(c => matchesCompany(name, c));
+  if (matched) return matched.group === 'cn';
+  return /[一-龥]/.test(name);
+}
+
+const PUSH_HIGH_BD_DEAL_TYPES = ['并购', '资产收购', 'License-in', 'License-out', 'Option交易'];
+const PUSH_HIGH_BD_SOURCE_TYPES = ['公司公告', '交易对手方公告', '监管/交易所公告'];
+const PUSH_HIGH_BD_STAGES = ['Ph2', 'Ph3', 'Approved', 'Commercial'];
+
+// 判断一条 BD 交易的推送优先级：先过纳入门槛（不满足返回 null，即不进入飞书），再区分 high/medium
+function inferBdPushPriority(deal) {
+  if (!deal) return null;
+  if (!deal.pharma || deal.pharma === 'N/A' || !deal.partner || deal.partner === 'N/A') return null;
+  if (!deal.deal_type || deal.deal_type === 'N/A') return null;
+  const hasSourceUrl = deal.source_url && deal.source_url !== 'N/A' && deal.source_url !== 'manual_import';
+  const officialSource = PUSH_HIGH_BD_SOURCE_TYPES.includes(deal.source_type);
+  if (!hasSourceUrl && !officialSource) return null;
+  if (deal.evidence_level === '低') return null;
+  if (!deal.date || deal.date === 'N/A') return null;
+  // 无明确标的的"战略合作"视为泛合作，不进入推送（普通供应/CDMO协议在提取阶段本就不会被标为BD交易类型）
+  const vagueCollab = deal.deal_type === '战略合作' && (!deal.asset || deal.asset === 'N/A' || deal.asset === '未披露');
+  if (vagueCollab) return null;
+
+  const highSignals = [
+    PUSH_HIGH_BD_DEAL_TYPES.includes(deal.deal_type),
+    officialSource,
+    PUSH_HIGH_BD_STAGES.includes(deal.stage),
+    (deal.upfront && deal.upfront !== 'N/A') || (deal.total_value && deal.total_value !== 'N/A'),
+    isMncCompanyName(deal.pharma) && looksLikeChinaOrBiotechPartner(deal.partner),
+  ];
+  if (highSignals.some(Boolean)) return 'high';
+  if (deal.asset && deal.asset !== 'N/A' && deal.asset !== '未披露' && (deal.evidence_level === '中' || deal.evidence_level === '高')) return 'medium';
+  return null;
+}
+
+const PUSH_HIGH_AI_DIRECTIONS = ['药物发现', '临床试验AI', '医学影像', '真实世界数据', '生成式AI', '数据/平台基础设施'];
+const PUSH_STRONG_AI_SOURCE_TYPES = ['公司公告', 'AI合作方公告', '合作方官网', '论文/会议'];
+const PUSH_HIGH_AI_SOURCE_TYPES = ['公司公告', 'AI合作方公告', '合作方官网'];
+
+function inferAiPushPriority(collab) {
+  if (!collab) return null;
+  if (!collab.pharma || collab.pharma === 'N/A' || !collab.ai_partner || collab.ai_partner === 'N/A') return null;
+  if (!collab.direction || collab.direction === 'N/A' || collab.direction === '其他') return null;
+  if (!collab.headline || collab.headline === 'N/A') return null;
+  if (collab.evidence_level === '低') return null;
+  const hasSourceUrl = collab.source_url && collab.source_url !== 'N/A' && collab.source_url !== 'manual_import';
+  const strongSource = PUSH_STRONG_AI_SOURCE_TYPES.includes(collab.source_type);
+  if (!hasSourceUrl && !strongSource) return null;
+
+  const isHigh = isMncCompanyName(collab.pharma)
+    && PUSH_HIGH_AI_SOURCE_TYPES.includes(collab.source_type)
+    && PUSH_HIGH_AI_DIRECTIONS.includes(collab.direction);
+  if (isHigh) return 'high';
+  return 'medium'; // 能走到这里说明已满足最低纳入门槛（双方 + 明确方向 + headline + 可靠来源）
+}
+
+// 市值/财务异动：detectAlerts() 产出的每一类异动本身都已经过阈值过滤，命中即视为 high；无异动的公司不进入推送
+function inferAlertPushPriority(companyName, alerts) {
+  return (alerts && alerts.length) ? 'high' : null;
+}
+
+// 生成 why_it_matters 短语列表（最多3条），供候选卡片和飞书文案共用
+function generateSelectionReason(category, rawRef) {
+  if (category === 'BD&并购') {
+    const reasons = [];
+    if (isMncCompanyName(rawRef.pharma) && looksLikeChinaOrBiotechPartner(rawRef.partner)) reasons.push('MNC引进中国/biotech资产');
+    if (PUSH_HIGH_BD_DEAL_TYPES.includes(rawRef.deal_type)) reasons.push(`${rawRef.deal_type}交易`);
+    if (PUSH_HIGH_BD_SOURCE_TYPES.includes(rawRef.source_type)) reasons.push('官方信源确认');
+    if (PUSH_HIGH_BD_STAGES.includes(rawRef.stage)) reasons.push(`临床${rawRef.stage}阶段资产`);
+    if ((rawRef.upfront && rawRef.upfront !== 'N/A') || (rawRef.total_value && rawRef.total_value !== 'N/A')) reasons.push('披露交易金额');
+    if (!reasons.length) reasons.push('明确交易双方与标的');
+    return reasons.slice(0, 3);
+  }
+  if (category === 'AI合作') {
+    const reasons = [];
+    if (isMncCompanyName(rawRef.pharma)) reasons.push('MNC加码AI合作');
+    if (PUSH_HIGH_AI_SOURCE_TYPES.includes(rawRef.source_type)) reasons.push('官方/合作方信源确认');
+    if (rawRef.direction && rawRef.direction !== 'N/A' && rawRef.direction !== '其他') reasons.push(`聚焦${rawRef.direction}`);
+    if (!reasons.length) reasons.push('明确合作方与应用方向');
+    return reasons.slice(0, 3);
+  }
+  if (category === '公司异动') {
+    return (rawRef.alerts || []).map(a => a.label).slice(0, 3);
+  }
+  return [];
+}
+
+// ==================== 飞书推送：候选构建 ====================
+
+function buildBdPushItem(deal) {
+  const priority = inferBdPushPriority(deal);
+  if (!priority) return null;
+  const stageText = PUSH_HIGH_BD_STAGES.includes(deal.stage) ? `｜${deal.stage}资产` : '';
+  const assetText = (deal.asset && deal.asset !== 'N/A' && deal.asset !== '未披露') ? deal.asset : '相关资产';
+  return {
+    id: `bd_${deal.deal_id}`,
+    category: 'BD&并购',
+    priority,
+    date: deal.date,
+    title: `${deal.pharma} × ${deal.partner}｜${deal.deal_type}${stageText}`,
+    one_liner: `${deal.pharma} 与 ${deal.partner} 达成${deal.deal_type}，涉及${assetText}。`.slice(0, 60),
+    why_it_matters: generateSelectionReason('BD&并购', deal),
+    source_label: deal.source_type,
+    source_url: (deal.source_url && deal.source_url !== 'N/A' && deal.source_url !== 'manual_import') ? deal.source_url : '',
+    detail_anchor: null,
+    raw_ref: deal,
+  };
+}
+
+function buildAiPushItem(collab) {
+  const priority = inferAiPushPriority(collab);
+  if (!priority) return null;
+  const oneLiner = (collab.headline && collab.headline !== 'N/A') ? collab.headline : `${collab.pharma} 与 ${collab.ai_partner} 开展 ${collab.direction} 合作。`;
+  return {
+    id: `ai_${collab.deal_id}`,
+    category: 'AI合作',
+    priority,
+    date: collab.date,
+    title: `${collab.pharma} × ${collab.ai_partner}｜${collab.direction}`,
+    one_liner: oneLiner.slice(0, 60),
+    why_it_matters: generateSelectionReason('AI合作', collab),
+    source_label: collab.source_type,
+    source_url: (collab.source_url && collab.source_url !== 'N/A' && collab.source_url !== 'manual_import') ? collab.source_url : '',
+    detail_anchor: null,
+    raw_ref: collab,
+  };
+}
+
+function buildAlertPushItem(companyName, alerts) {
+  const priority = inferAlertPushPriority(companyName, alerts);
+  if (!priority) return null;
+  const record = cacheData?.companies?.[companyName];
+  const displayName = record?.display_name || companyName;
+  const labels = alerts.map(a => a.label).join('、');
+  const rawRef = { companyName, alerts, record };
+  return {
+    id: `alert_${companyName}_${cacheData?.updatedAt || ''}`,
+    category: '公司异动',
+    priority,
+    date: cacheData?.updatedAt ? cacheData.updatedAt.slice(0, 10) : 'N/A',
+    title: `${displayName}｜异动提醒`,
+    one_liner: `${displayName} 触发异动：${labels}。`.slice(0, 60),
+    why_it_matters: generateSelectionReason('公司异动', rawRef),
+    source_label: '市值与财务看板',
+    source_url: '',
+    detail_anchor: null,
+    raw_ref: rawRef,
+  };
+}
+
+// 从 BD/AI合作/市值异动三处缓存中筛出达到推送门槛的候选，按 high 优先、同优先级按日期倒序排序，
+// 再按 maxItems 截断。不在这里丢弃"已推送过"的条目——只打一个 already_pushed 标记，交给渲染层决定默认是否勾选，
+// 用户仍能在候选列表里看到并手动重新选中
+function buildPushCandidates(options) {
+  const opts = options || {};
+  const periodMode = opts.periodMode || pushPeriodMode;
+  const rangeMode = opts.rangeMode || pushRangeMode;
+  const categoryToggles = opts.categoryToggles || pushCategoryToggles;
+  const maxItems = opts.maxItems || pushMaxItems;
+  const { start, end } = computePushDateRange(periodMode, rangeMode);
+  const pushedIds = new Set(pushHistory?.pushed_item_ids || []);
+
+  const items = [];
+
+  if (categoryToggles['BD&并购']) {
+    for (const deal of (bdCacheData?.deals || [])) {
+      if (!isDateWithinPushRange(deal.date, start, end)) continue;
+      const item = buildBdPushItem(deal);
+      if (item) items.push(item);
+    }
+  }
+
+  if (categoryToggles['AI合作']) {
+    for (const collab of (aiCollabCacheData?.collaborations || [])) {
+      if (!isDateWithinPushRange(collab.date, start, end)) continue;
+      const item = buildAiPushItem(collab);
+      if (item) items.push(item);
+    }
+  }
+
+  if (categoryToggles['公司异动']) {
+    // 异动是"最近一次刷新"的快照，没有逐条日期，用本次刷新时间是否落在区间内判断整体是否纳入
+    const alertDateOk = isDateWithinPushRange(cacheData?.updatedAt ? cacheData.updatedAt.slice(0, 10) : null, start, end);
+    if (alertDateOk) {
+      const alerts = cacheData?.alerts || {};
+      for (const companyName of Object.keys(alerts)) {
+        const item = buildAlertPushItem(companyName, alerts[companyName]);
+        if (item) items.push(item);
+      }
+    }
+  }
+
+  const priorityRank = { high: 0, medium: 1 };
+  items.sort((a, b) => {
+    const pr = priorityRank[a.priority] - priorityRank[b.priority];
+    if (pr !== 0) return pr;
+    return String(b.date).localeCompare(String(a.date));
+  });
+
+  for (const item of items) item.already_pushed = pushedIds.has(item.id);
+
+  return items.slice(0, maxItems);
+}
+
+// ==================== 飞书推送：文案生成 ====================
+
+function feishuPeriodLabel(periodMode) {
+  const { autoPeriodId } = getPushPeriodOptions();
+  const effectiveId = (!periodMode || periodMode === 'auto') ? autoPeriodId : periodMode;
+  const period = CONFIG.PUSH_PERIODS.find(p => p.id === effectiveId) || CONFIG.PUSH_PERIODS.find(p => p.id === 'custom');
+  return period.label;
+}
+
+function formatPushDate(d) {
+  if (!d) return '';
+  return d.toISOString().slice(0, 10);
+}
+
+function feishuItemBlock(item, index) {
+  const lines = [`${index}. ${item.title}`, `    一句话：${item.one_liner}`];
+  if (item.why_it_matters && item.why_it_matters.length) {
+    lines.push(`    为什么重要：${item.why_it_matters.join(' / ')}`);
+  }
+  lines.push(`    来源：${item.source_label}${item.source_url ? '（' + item.source_url + '）' : ''}`);
+  return lines.join('\n');
+}
+
+// 纯文本飞书文案：只区分"一、必须关注"（high）与"二、值得浏览"（medium）；没有 high 时省略第一段标题，
+// 完全没有候选时用统一的空状态文案兜底；末尾始终附看板链接
+function generateFeishuPushText(candidates, options) {
+  const opts = options || {};
+  const periodMode = opts.periodMode || pushPeriodMode;
+  const rangeMode = opts.rangeMode || pushRangeMode;
+  const dashboardUrl = opts.dashboardUrl || CONFIG.PUSH_DEFAULT_DASHBOARD_URL;
+  const { start, end } = computePushDateRange(periodMode, rangeMode);
+  const periodLabel = feishuPeriodLabel(periodMode);
+  const coverageText = start ? `${formatPushDate(start)} 至 ${formatPushDate(end)}` : `建库以来至 ${formatPushDate(end)}`;
+
+  const list = candidates || [];
+  const highItems = list.filter(i => i.priority === 'high');
+  const mediumItems = list.filter(i => i.priority === 'medium');
+
+  const lines = [`【Pharma 情报｜${periodLabel}】`, `覆盖时间：${coverageText}`, ''];
+
+  if (!list.length) {
+    lines.push('本周期未发现达到推送标准的高价值事件，可进入看板查看完整结果。');
+  } else {
+    if (highItems.length) {
+      lines.push('一、必须关注', '');
+      highItems.forEach((item, i) => lines.push(feishuItemBlock(item, i + 1)));
+      lines.push('');
+    }
+    if (mediumItems.length) {
+      lines.push('二、值得浏览', '');
+      mediumItems.forEach((item, i) => lines.push(feishuItemBlock(item, i + 1)));
+      lines.push('');
+    }
+  }
+
+  lines.push(`进入看板查看更多：${dashboardUrl}`);
+  return lines.join('\n');
+}
+
+// ==================== 飞书推送：渲染 ====================
+
+// 用当前筛选参数重新计算候选列表：默认勾选"未推送过"的全部候选（high/medium），已推送过的默认不勾选但仍展示，
+// 供用户手动重新选中；候选变化后联动重新生成一次文案预览
+function refreshPushCandidates() {
+  pushCandidates = buildPushCandidates({
+    periodMode: pushPeriodMode,
+    rangeMode: pushRangeMode,
+    categoryToggles: pushCategoryToggles,
+    maxItems: pushMaxItems,
+  });
+  pushSelectedIds = new Set(pushCandidates.filter(i => !i.already_pushed).map(i => i.id));
+  handleRegeneratePushText();
+  renderPushCandidates();
+}
+
+// 只用"当前候选 + 当前勾选"重新生成文案，不重新筛选候选（用于用户取消勾选某几条后手动刷新预览）
+function handleRegeneratePushText() {
+  const selected = pushCandidates.filter(i => pushSelectedIds.has(i.id));
+  pushGeneratedText = generateFeishuPushText(selected, {
+    periodMode: pushPeriodMode,
+    rangeMode: pushRangeMode,
+    dashboardUrl: CONFIG.PUSH_DEFAULT_DASHBOARD_URL,
+  });
+  renderPushTextPreview();
+}
+
+function renderPushTextPreview() {
+  const el = document.getElementById('pushTextPreview');
+  if (el) el.value = pushGeneratedText;
+}
+
+function pushCategoryBadgeCls(category) {
+  if (category === 'BD&并购') return 'bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300';
+  if (category === 'AI合作') return 'bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300';
+  return 'bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300';
+}
+
+function pushCandidateCardHtml(item) {
+  const checked = pushSelectedIds.has(item.id);
+  const reasons = (item.why_it_matters || []).join(' / ');
+  return `
+    <label class="flex items-start gap-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800 cursor-pointer">
+      <input type="checkbox" data-push-item-id="${escapeHtml(item.id)}" ${checked ? 'checked' : ''} class="mt-1 shrink-0">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium ${pushCategoryBadgeCls(item.category)}">${escapeHtml(item.category)}</span>
+          <span class="text-xs text-slate-400">${escapeHtml(formatFieldValue(item.date))}</span>
+          ${item.already_pushed ? '<span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">已推送过</span>' : ''}
+        </div>
+        <div class="font-medium mt-1">${escapeHtml(item.title)}</div>
+        <div class="text-sm text-slate-600 dark:text-slate-300 mt-0.5">${escapeHtml(item.one_liner)}</div>
+        ${reasons ? `<div class="text-xs text-slate-400 mt-0.5">为什么重要：${escapeHtml(reasons)}</div>` : ''}
+        <div class="text-xs text-slate-400 mt-0.5">来源：${escapeHtml(item.source_label)}</div>
+        ${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-0.5 inline-block truncate max-w-full">${escapeHtml(item.source_url)}</a>` : ''}
+      </div>
+    </label>`;
+}
+
+function pushEmptyStateHtml() {
+  return `<div class="text-center py-10 text-slate-400">
+    <div class="text-3xl mb-2">📭</div>
+    <div>本周期未发现达到推送标准的高价值事件，可进入看板查看完整结果。</div>
+  </div>`;
+}
+
+function renderPushCandidates() {
+  const container = document.getElementById('pushCandidateList');
+  if (!container) return;
+  if (!pushCandidates.length) { container.innerHTML = pushEmptyStateHtml(); return; }
+  const highItems = pushCandidates.filter(i => i.priority === 'high');
+  const mediumItems = pushCandidates.filter(i => i.priority === 'medium');
+  const groupHtml = (label, items) => {
+    if (!items.length) return '';
+    return `<div>
+      <div class="text-xs font-bold text-slate-400 mb-1">${escapeHtml(label)}（${items.length}）</div>
+      <div class="space-y-2 mb-3">${items.map(pushCandidateCardHtml).join('')}</div>
+    </div>`;
+  };
+  container.innerHTML = groupHtml('🔴 一、必须关注（high）', highItems) + groupHtml('🟡 二、值得浏览（medium）', mediumItems);
+}
+
+function renderPushHistory() {
+  const container = document.getElementById('pushHistoryList');
+  if (!container) return;
+  const pushes = (pushHistory?.pushes || []).slice().reverse().slice(0, 10);
+  if (!pushes.length) { container.innerHTML = '<div class="text-slate-400">暂无推送记录</div>'; return; }
+  container.innerHTML = pushes.map(p => `
+    <div class="rounded-lg border border-slate-200 dark:border-slate-700 p-2 bg-white dark:bg-slate-800">
+      <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 gap-2">
+        <span class="truncate">${escapeHtml(formatDateTime(p.pushed_at))}｜${escapeHtml(p.period_label || '')}｜${p.channel === 'webhook' ? '飞书 Webhook' : '手动复制'}</span>
+        <span class="shrink-0">${(p.item_ids || []).length} 条</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderPushErrorBanner() {
+  const el = document.getElementById('pushErrorBanner');
+  if (!el) return;
+  if (!pushErrorMessages.length) { el.innerHTML = ''; return; }
+  el.innerHTML = pushErrorMessages.map(msg => `
+    <div class="px-4 py-3 rounded-lg bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-200 text-sm">
+      ❌ ${escapeHtml(msg)}
+    </div>
+  `).join('');
+}
+
+// 展示"今天对应哪个推送节奏"，帮助用户理解「自动」模式下实际会用哪套覆盖时间说明
+function renderPushPeriodDesc() {
+  const el = document.getElementById('pushPeriodDesc');
+  if (!el) return;
+  const { autoPeriodId } = getPushPeriodOptions();
+  const effectiveId = pushPeriodMode === 'auto' ? autoPeriodId : pushPeriodMode;
+  const period = CONFIG.PUSH_PERIODS.find(p => p.id === effectiveId) || CONFIG.PUSH_PERIODS.find(p => p.id === 'custom');
+  el.textContent = pushPeriodMode === 'auto' ? `今天对应：${period.label}｜${period.desc}` : period.desc;
+}
+
+// Tab 切换到「飞书推送」时的入口：只有从未生成过候选时才自动计算一次，避免覆盖用户已做的勾选/编辑
+function renderPushTab() {
+  renderPushPeriodDesc();
+  if (!pushCandidates.length) {
+    refreshPushCandidates();
+  } else {
+    renderPushCandidates();
+    renderPushTextPreview();
+  }
+  renderPushHistory();
+  renderPushErrorBanner();
+}
+
+// ==================== 飞书推送：操作 ====================
+
+// 复制到剪贴板：复制 textarea 的当前内容（用户可能已手动编辑过，不是 pushGeneratedText 本身）
+async function handleCopyPushText() {
+  const status = document.getElementById('pushActionStatus');
+  const textarea = document.getElementById('pushTextPreview');
+  try {
+    await navigator.clipboard.writeText(textarea.value);
+  } catch (e) {
+    textarea.select();
+    document.execCommand('copy');
+  }
+  status.textContent = '✅ 已复制到剪贴板';
+  status.className = 'text-sm h-5 mt-1 text-emerald-600 dark:text-emerald-400';
+  setTimeout(() => { status.textContent = ''; }, 2000);
+}
+
+// 记录一次推送：写入本地推送记录 + 把本次勾选的候选标记为"已推送过"（不重新拉取候选，只更新内存中已有条目的标记）
+function recordPush(channel, text) {
+  const itemIds = [...pushSelectedIds];
+  const entry = {
+    pushed_at: new Date().toISOString(),
+    channel,
+    period_label: feishuPeriodLabel(pushPeriodMode),
+    item_ids: itemIds,
+    text,
+  };
+  if (!pushHistory) pushHistory = { pushes: [], pushed_item_ids: [] };
+  pushHistory.pushes.push(entry);
+  pushHistory.pushed_item_ids = [...new Set([...pushHistory.pushed_item_ids, ...itemIds])];
+  savePushHistory(pushHistory);
+  for (const item of pushCandidates) {
+    if (itemIds.includes(item.id)) item.already_pushed = true;
+  }
+  renderPushCandidates();
+  renderPushHistory();
+}
+
+// "标记为已推送"：不实际发送任何请求，只是把当前勾选记为已推送，避免下次生成时默认再次勾选（配合复制文案手动发到飞书群的场景）
+function handleMarkAsPushed() {
+  const status = document.getElementById('pushActionStatus');
+  if (!pushSelectedIds.size) {
+    pushErrorMessages = ['请先勾选至少一条候选事件'];
+    renderPushErrorBanner();
+    return;
+  }
+  const text = document.getElementById('pushTextPreview').value;
+  recordPush('copy', text);
+  status.textContent = '✅ 已标记为已推送';
+  status.className = 'text-sm h-5 mt-1 text-emerald-600 dark:text-emerald-400';
+  setTimeout(() => { status.textContent = ''; }, 2500);
+}
+
+function handleClearPushHistory() {
+  if (!confirm('确定要清除本地推送记录吗？此操作不可撤销。')) return;
+  pushHistory = { pushes: [], pushed_item_ids: [] };
+  savePushHistory(pushHistory);
+  renderPushHistory();
+}
+
+// 飞书自定义机器人文本消息格式；浏览器直接调用大概率被 CORS 拦截（飞书接口不返回 CORS 头），
+// 失败时统一在 handleSendToFeishuWebhook() 里给出兜底提示，这里只负责发请求 + 解析响应
+async function sendToFeishuWebhook(text) {
+  const url = feishuWebhookSettings?.url;
+  if (!url) throw new Error('未配置飞书 Webhook URL');
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ msg_type: 'text', content: { text } }),
+  });
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => '');
+    throw new Error(`飞书返回错误（HTTP ${res.status}）：${bodyText.slice(0, 200)}`);
+  }
+  const json = await res.json().catch(() => ({}));
+  if (json.code && json.code !== 0) {
+    throw new Error(`飞书返回错误：${json.msg || JSON.stringify(json)}`);
+  }
+  return json;
+}
+
+async function handleSendToFeishuWebhook() {
+  const status = document.getElementById('pushActionStatus');
+  if (!feishuWebhookSettings?.enabled || !feishuWebhookSettings?.url) {
+    pushErrorMessages = ['请先在设置面板配置飞书 Webhook URL 并勾选"启用 Webhook 推送"'];
+    renderPushErrorBanner();
+    return;
+  }
+  const text = document.getElementById('pushTextPreview').value;
+  if (!text.trim()) {
+    pushErrorMessages = ['当前文案为空，无法推送'];
+    renderPushErrorBanner();
+    return;
+  }
+  if (!confirm('确认将当前文案推送到飞书群吗？请确认内容已经核对。')) return;
+
+  pushErrorMessages = [];
+  renderPushErrorBanner();
+  status.textContent = '推送中…';
+  status.className = 'text-sm h-5 mt-1 text-slate-500 dark:text-slate-400';
+  try {
+    await sendToFeishuWebhook(text);
+    status.textContent = '✅ 已推送到飞书';
+    status.className = 'text-sm h-5 mt-1 text-emerald-600 dark:text-emerald-400';
+    recordPush('webhook', text);
+  } catch (err) {
+    status.textContent = '';
+    pushErrorMessages = [`浏览器直接调用飞书 Webhook 可能受跨域限制。建议先使用复制文案，或后续通过后端/Serverless 转发。（${err.message}）`];
+    renderPushErrorBanner();
+  }
+}
+
 // ==================== Tab 切换 ====================
 
 function switchTab(tab) {
   document.getElementById('tabPanel-market').classList.toggle('hidden', tab !== 'market');
   document.getElementById('tabPanel-bd').classList.toggle('hidden', tab !== 'bd');
   document.getElementById('tabPanel-ai').classList.toggle('hidden', tab !== 'ai');
+  document.getElementById('tabPanel-push').classList.toggle('hidden', tab !== 'push');
   document.querySelectorAll('.tab-btn').forEach(btn => {
     const active = btn.dataset.tab === tab;
     btn.classList.toggle('border-indigo-500', active);
@@ -3532,6 +4260,10 @@ function switchTab(tab) {
     refreshBdDeals();
   }
   // AI合作板块明确要求：页面/Tab 切换时不自动调用 LLM，只读缓存展示，必须用户手动点「刷新 AI 合作」才会触发请求
+  // 飞书推送板块只读本地缓存做前端规则筛选，不调用大模型；renderPushTab() 只在从未生成过候选时才自动计算一次
+  if (tab === 'push') {
+    renderPushTab();
+  }
 }
 
 // ==================== 设置面板交互 ====================
@@ -3546,6 +4278,9 @@ function openSettingsPanel() {
   document.getElementById('alertMarketCapPctInput').value = alertRules.marketCapPct;
   document.getElementById('alertProductPctInput').value = alertRules.productSalesPct;
   document.getElementById('alertKeywordsInput').value = alertRules.riskKeywords.join(',');
+  document.getElementById('feishuWebhookUrlInput').value = feishuWebhookSettings.url;
+  document.getElementById('feishuWebhookSecretInput').value = feishuWebhookSettings.secret;
+  document.getElementById('feishuWebhookEnabledCheckbox').checked = feishuWebhookSettings.enabled;
   document.getElementById('firstUseTip').classList.toggle('hidden', !isFirstUse);
   document.getElementById('settingsOverlay').classList.remove('hidden');
   document.getElementById('settingsPanel').classList.remove('translate-x-full');
@@ -3611,6 +4346,19 @@ function handleSaveAlertRules() {
   };
   saveAlertRulesToStorage(alertRules);
   const status = document.getElementById('saveAlertRulesStatus');
+  status.textContent = '✅ 已保存';
+  status.className = 'text-sm h-5 text-emerald-600 dark:text-emerald-400';
+  setTimeout(() => { status.textContent = ''; }, 2000);
+}
+
+function handleSaveFeishuWebhook() {
+  feishuWebhookSettings = {
+    url: document.getElementById('feishuWebhookUrlInput').value.trim(),
+    secret: document.getElementById('feishuWebhookSecretInput').value.trim(),
+    enabled: document.getElementById('feishuWebhookEnabledCheckbox').checked,
+  };
+  saveFeishuWebhookSettings(feishuWebhookSettings);
+  const status = document.getElementById('saveFeishuWebhookStatus');
   status.textContent = '✅ 已保存';
   status.className = 'text-sm h-5 text-emerald-600 dark:text-emerald-400';
   setTimeout(() => { status.textContent = ''; }, 2000);
@@ -3754,6 +4502,44 @@ function init() {
     const backcheckBtn = e.target.closest('[data-ai-backcheck]');
     if (backcheckBtn) handleAiBackcheck(backcheckBtn.dataset.aiBackcheck);
   });
+
+  // 飞书推送板块：页面加载时只读缓存展示（推送记录/Webhook配置），候选与文案要等用户切到该 Tab 才计算
+  pushHistory = loadPushHistory();
+  feishuWebhookSettings = loadFeishuWebhookSettings();
+
+  document.getElementById('pushPeriodSelect').addEventListener('change', (e) => {
+    pushPeriodMode = e.target.value;
+    renderPushPeriodDesc();
+    refreshPushCandidates();
+  });
+  document.getElementById('pushRangeSelect').addEventListener('change', (e) => {
+    pushRangeMode = e.target.value;
+    refreshPushCandidates();
+  });
+  document.getElementById('pushMaxItemsSelect').addEventListener('change', (e) => {
+    pushMaxItems = Number(e.target.value) || CONFIG.PUSH_MAX_ITEMS_DEFAULT;
+    refreshPushCandidates();
+  });
+  const pushCategoryCheckboxMap = { pushCategoryBd: 'BD&并购', pushCategoryAi: 'AI合作', pushCategoryAlert: '公司异动' };
+  Object.entries(pushCategoryCheckboxMap).forEach(([id, category]) => {
+    document.getElementById(id).addEventListener('change', (e) => {
+      pushCategoryToggles[category] = e.target.checked;
+      refreshPushCandidates();
+    });
+  });
+  document.getElementById('pushRegenerateBtn').addEventListener('click', refreshPushCandidates);
+  document.getElementById('pushCandidateList').addEventListener('change', (e) => {
+    const checkbox = e.target.closest('[data-push-item-id]');
+    if (!checkbox) return;
+    const id = checkbox.dataset.pushItemId;
+    if (checkbox.checked) pushSelectedIds.add(id); else pushSelectedIds.delete(id);
+  });
+  document.getElementById('pushRegenerateTextBtn').addEventListener('click', handleRegeneratePushText);
+  document.getElementById('pushCopyBtn').addEventListener('click', handleCopyPushText);
+  document.getElementById('pushMarkPushedBtn').addEventListener('click', handleMarkAsPushed);
+  document.getElementById('pushSendWebhookBtn').addEventListener('click', handleSendToFeishuWebhook);
+  document.getElementById('pushClearHistoryBtn').addEventListener('click', handleClearPushHistory);
+  document.getElementById('saveFeishuWebhookBtn').addEventListener('click', handleSaveFeishuWebhook);
 
   document.getElementById('providerPresetSelect').addEventListener('change', handleProviderPresetChange);
   document.getElementById('themeToggleBtn').addEventListener('click', toggleTheme);
