@@ -85,7 +85,7 @@
 
   <!-- 免责声明（BD 特有：来源链接由 AI 生成，可能不准确甚至虚构） -->
   <div class="mb-4 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-sm">
-    ⚠️ 以下交易信息由 AI 联网搜索生成，来源链接可能不准确甚至虚构，务必点击核实后再引用；仅供内部参考。
+    ⚠️ BD&并购交易信息主要来自公司公告、监管/交易所公告、媒体报道和公开网页。以下结果由 AI 辅助搜索与结构化提取生成，可能存在遗漏、误判、日期缺失或来源不完整。请点击来源核验后再用于正式引用。
   </div>
 
   <div id="bdErrorBanner" class="mb-4 space-y-2"></div>
@@ -93,6 +93,7 @@
   <div class="mb-4 flex flex-wrap items-center gap-3 justify-between">
     <div class="flex items-center gap-3 flex-wrap">
       <span id="bdLastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
+      <span id="bdLookbackText" class="text-xs text-slate-400"></span>
       <button id="bdRefreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新交易</button>
       <button id="bdPasteParseBtn" class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium">📋 粘贴原文解析</button>
     </div>
@@ -102,6 +103,12 @@
       </select>
       <select id="bdTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="all">全部类型</option>
+      </select>
+      <select id="bdEvidenceFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部证据等级</option>
+      </select>
+      <select id="bdSourceTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部来源类型</option>
       </select>
     </div>
   </div>
@@ -162,7 +169,7 @@
     </div>
   </div>
 
-  <div id="aiCollabGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+  <div id="aiCollabGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start"></div>
 </div>
 
 </main>
@@ -333,6 +340,14 @@ const CONFIG = {
   BD_LOOKBACK_DAYS: 90,
   // BD 板块每次只处理 1 家公司再调用大模型，搜完一家就能立刻在列表里看到，且单次请求足够小、基本不会超时
   BD_BATCH_SIZE: 1,
+  BD_DEAL_TYPES: ['License-in', 'License-out', '并购', '资产收购', 'Option交易', '共同开发', '共同商业化', '战略合作', '其他'],
+  // 交易类型"具体性"优先级（从具体到笼统），用于合并时同一交易被打了不同类型标签的冲突处理
+  BD_DEAL_TYPE_SPECIFICITY: ['并购', '资产收购', 'License-in', 'License-out', 'Option交易', '共同开发', '共同商业化', '战略合作', '其他'],
+  BD_SOURCE_TYPES: ['公司公告', '交易对手方公告', '监管/交易所公告', '媒体报道', '手动导入', '其他'],
+  // 判定为同一交易的日期容差窗口（天）
+  BD_DEDUPE_DATE_WINDOW_DAYS: 30,
+  // 归一化交易对手方名称时去除的常见公司后缀
+  BD_PARTNER_SUFFIXES: ['inc', 'ltd', 'limited', 'co', 'corporation', 'corp', 'llc'],
   // AI合作板块配置
   AI_COLLAB_CACHE_KEY: 'pharma_intel_ai_collabs',
   AI_COLLAB_DETAIL_CACHE_KEY: 'pharma_intel_ai_collab_details',
@@ -398,6 +413,8 @@ let bdDetailCache = {};         // { [deal_id]: 深挖分析结果 }
 let bdErrorMessages = [];
 let bdFilterCompany = 'all';
 let bdFilterType = 'all';
+let bdFilterEvidenceLevel = 'all';
+let bdFilterSourceType = 'all';
 let bdIsLoading = false;
 let expandedDealId = null;      // 当前展开深挖详情的交易 id
 let bdLoadingDetailId = null;   // 正在请求深挖分析的交易 id
@@ -1038,7 +1055,10 @@ function saveBdDetailCacheToStorage(cache) {
 
 // ==================== BD & 并购：第一级 - 交易列表 ====================
 
-const DEAL_FIELDS = ['deal_id', 'date', 'pharma', 'partner', 'deal_type', 'asset', 'upfront', 'total_value', 'source_url'];
+const DEAL_FIELDS = [
+  'deal_id', 'dedupe_key', 'date', 'date_basis', 'pharma', 'partner', 'deal_type', 'asset',
+  'rights_scope', 'stage', 'upfront', 'total_value', 'source_url', 'source_type', 'evidence_level',
+];
 const BD_MIN_LOOKBACK_DAYS = 7;
 const BD_LOOKBACK_BUFFER_DAYS = 3;
 
@@ -1050,25 +1070,54 @@ function computeBdLookbackDays() {
   return Math.min(CONFIG.BD_LOOKBACK_DAYS, Math.max(BD_MIN_LOOKBACK_DAYS, gap));
 }
 
+// 全部字段的完整 schema，grounded / 非grounded / 粘贴解析三个 prompt 共用，避免重复维护三份几乎一样的大字符串
+const BD_DEAL_SCHEMA = '{"deal_id":"唯一标识，建议使用 pharma_partner_asset_date 格式","dedupe_key":"用于去重的稳定键，建议 pharma_normalizedPartner_normalizedAsset","date":"宣布日期，YYYY-MM-DD；无法判断填 N/A","date_basis":"公司公告日期 | 交易对手方公告日期 | 监管/交易所公告日期 | 媒体报道日期 | 搜索结果日期 | URL推断 | N/A","pharma":"药企方，必须来自目标公司列表，并与原始公司名保持一致","partner":"交易对手方","deal_type":"License-in | License-out | 并购 | 资产收购 | Option交易 | 共同开发 | 共同商业化 | 战略合作 | 其他","asset":"标的资产/产品/管线/平台/公司名称，用中文描述；专有名词和药物代号可保留英文","rights_scope":"全球 | 大中华区 | 中国大陆 | 美国 | 欧洲 | 特定区域 | 未披露","stage":"Discovery | Preclinical | Ph1 | Ph2 | Ph3 | Approved | Commercial | Platform | N/A","upfront":"首付款；未披露填 N/A","total_value":"交易总额含里程碑；未披露填 N/A","source_url":"主来源链接，必须来自搜索结果","source_type":"公司公告 | 交易对手方公告 | 监管/交易所公告 | 媒体报道 | 手动导入 | 其他","evidence_level":"高 | 中 | 低","sources":[{"title":"来源标题","url":"来源链接","type":"公司公告 | 交易对手方公告 | 监管/交易所公告 | 媒体报道 | 手动导入 | 其他","published_date":"YYYY-MM-DD 或 N/A","provider":"brave | serper | tavily | manual | N/A"}]}';
+
+// 无搜索 Key 时的兜底路径：模型只能凭自身知识/联网能力判断，准确性弱于 grounded 路径，但仍保留同一套 schema
 function buildBdListMessages(batchCompanies, lookbackDays) {
   const refDate = getReferenceDate();
   const companyNames = batchCompanies.map(c => c.name).join('、');
-  const sys = '你是一位医药行业资深 BD（商务拓展）分析师，擅长追踪药企的授权引进/授权引出/并购/战略合作交易。请基于联网搜索到的公开信息作答，不要编造交易，找不到就返回空数组。除公司名、产品名/药物代号等专有名词外，所有描述性文字（如 asset 字段）请用中文表达，哪怕信息源是英文。';
-  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"来源链接（无法确定真实链接就填N/A，不要编造）"}';
-  const user = `请搜索以下药企在过去 ${lookbackDays} 天内（以 ${refDate} 为基准日）达成的重大 BD 交易、License 合作、并购交易：\n${companyNames}\n\n优先参考来源：BioPharma Dive、FiercePharma、Reuters Health、SEC 8-K 文件、公司官方 Press Release；中文来源：医药魔方、动脉网、36氪医疗、上交所/深交所/港交所公告。\n\n请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n找不到任何交易就返回 {"deals": []}，不要编造。source_url 字段尤其重要：宁可填 N/A 也不要编造不存在的链接。不要有任何额外文字、不要使用 markdown 代码块。`;
+  const sys = `你是一位医药行业资深 BD（商务拓展）分析师，擅长追踪药企授权、并购、资产收购、共同开发和商业化合作交易。请基于你掌握的公开信息作答，不要编造交易、日期、金额、资产、交易条款或来源链接，找不到就返回空数组。日期规则：date 应优先填写交易首次宣布日期，不要把当前日期当作宣布日期；如果无法确认日期，填 N/A；date_basis 必须说明日期依据。除公司名、产品名、药物代号、靶点缩写等专有名词外，描述性文字请使用中文。`;
+  const user = `请回顾以下药企在过去 ${lookbackDays} 天内（以 ${refDate} 为基准日）达成的重大 BD 交易、License 合作、并购、资产收购、共同开发、共同商业化或有明确资产/权益范围的战略合作：\n${companyNames}\n\n请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${BD_DEAL_SCHEMA}\n找不到任何交易就返回 {"deals": []}，不要编造。source_url 字段尤其重要：宁可填 N/A 也不要编造不存在的链接。不要有任何额外文字、不要使用 markdown 代码块。`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
 // 用真实搜索结果（来自用户选择的搜索服务商）作为依据构造 prompt，要求模型只能依据这些结果作答，不得编造未出现的交易/链接
 function buildBdListMessagesGrounded(searchContext, lookbackDays) {
   const refDate = getReferenceDate();
-  const sys = '你是一位医药行业资深 BD（商务拓展）分析师。下面会提供搜索引擎针对各家目标公司返回的真实网页搜索结果，请只依据这些搜索结果本身提取 BD 交易信息，不要使用搜索结果之外的知识编造交易，也不要使用未出现在搜索结果里的链接。某家公司如果没有搜到相关结果，就跳过它，不要编造。除公司名、产品名/药物代号等专有名词外，所有描述性文字（如 asset 字段）请用中文表达，哪怕搜索结果原文是英文。';
-  const schema = '{"deal_id":"唯一标识（公司名+日期缩写，如 Roche_20260601）","date":"宣布日期(YYYY-MM-DD，无法从摘要判断就填N/A)","pharma":"药企方（必须是我给出的目标公司名单中的一个，逐字一致）","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（如未披露填N/A）","total_value":"交易总额含里程碑（如未披露填N/A）","source_url":"必须是下面搜索结果里出现过的真实链接之一，不要编造或修改"}';
+  const sys = `你是一位医药行业资深 BD（商务拓展）分析师，擅长从公开搜索结果中识别药企授权、并购、资产收购、共同开发和商业化合作交易。
+请只基于用户提供的搜索结果提取信息。不要使用搜索结果之外的知识补充事实。不要编造交易、日期、金额、资产、交易条款或来源链接。
+请优先采纳公司官方来源，包括药企官网新闻室、投资者关系页面、交易对手方官网新闻稿、SEC 8-K、交易所公告和双方联合新闻稿。若公司官方来源与媒体报道同时存在，应优先保留官方来源，并可将媒体报道作为补充来源。
+请遵守以下纳入标准：
+1. 目标药企与外部公司之间存在明确授权、并购、资产收购、option-to-license、共同开发、共同商业化或有明确资产/权益范围的战略合作；
+2. 交易应有明确交易对手方；
+3. 交易应尽量有明确资产、产品、管线、平台、公司、权益区域或合作范围；
+4. 金额未披露时可以返回，但必须明确填 N/A，不得编造；
+5. 必须能从搜索结果中识别出来源链接。
+请排除以下情况：
+1. 普通供应协议、CDMO服务、销售代理或市场推广合作，除非涉及资产授权、权益转移或共同商业化；
+2. 无具体资产、平台、管线或权益范围的泛战略合作；
+3. 仅为融资、股权投资或基金投资，未披露具体合作项目；
+4. 仅为临床试验启动、监管获批、产品上市或业绩新闻，未涉及交易；
+5. 媒体猜测、rumor 或潜在交易传闻，除非已有公司正式公告；
+6. 无真实来源链接或无法确认交易双方的条目。
+日期规则：
+- date 应优先填写交易首次宣布日期；
+- 优先使用公司公告日期；
+- 若无公司公告日期，可使用交易对手方公告日期；
+- 若无官方日期，可使用可信媒体报道日期；
+- 若搜索结果提供 published_date，可作为日期依据；
+- 不要把网页抓取日期当作交易宣布日期；
+- 如果无法确认日期，填 N/A；
+- date_basis 必须说明日期依据。
+除公司名、产品名、药物代号、靶点缩写等专有名词外，描述性文字请使用中文。`;
+
   const contextText = searchContext.map(c => {
     if (!c.results.length) return `【${c.company}】未搜到相关结果`;
-    return `【${c.company}】\n` + c.results.map((r, i) => `${i + 1}. ${r.title}\n   链接：${r.url}\n   摘要：${r.snippet}`).join('\n');
+    return `【${c.company}】\n` + c.results.map((r, i) => `${i + 1}. ${r.title}\n   链接：${r.url}\n   发布日期：${r.published_date || '未知'}\n   来源渠道：${r.provider || '未知'}\n   摘要：${r.content || r.snippet}`).join('\n');
   }).join('\n\n');
-  const user = `以下是针对各目标公司的搜索引擎结果（基准日 ${refDate}，仅代表搜索快照，不代表真实发生时间一定在 ${lookbackDays} 天内，请结合摘要内容自行判断是否为近期交易）：\n\n${contextText}\n\n请从上述搜索结果中提取重大 BD 交易、License 合作、并购交易信息，只使用出现在搜索结果里的信息和链接，不要编造。请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${schema}\n没有找到任何交易就返回 {"deals": []}。不要有任何额外文字、不要使用 markdown 代码块。`;
+
+  const user = `以下是针对目标药企在过去 ${lookbackDays} 天内 BD&并购交易的搜索结果（基准日 ${refDate}，仅代表搜索快照，请结合摘要内容自行判断是否为近期交易）：\n\n${contextText}\n\n请从中提取重大 BD 交易、License 合作、并购、资产收购、共同开发、共同商业化或有明确资产/权益范围的战略合作，只使用出现在搜索结果里的信息和链接，不要编造。请以严格 JSON 对象格式返回：{"deals": [交易列表，字段如下]}，字段 schema：${BD_DEAL_SCHEMA}\n没有找到任何交易就返回 {"deals": []}。不要有任何额外文字、不要使用 markdown 代码块。`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
@@ -1095,6 +1144,19 @@ async function fetchSearchApi(url, options, providerLabel) {
   return res.json();
 }
 
+// 不同搜索服务商字段名不一致，统一映射成一套结构：snippet 给卡片快速展示用，content 给 LLM 提供更长上下文，
+// published_date 用于改善 date 字段判断，provider 用于排查不同搜索源的结果差异
+function normalizeSearchResult(raw, provider) {
+  return {
+    title: raw.title || '',
+    url: raw.url || raw.link || '',
+    snippet: raw.description || raw.snippet || raw.content || '',
+    content: raw.content || raw.description || raw.snippet || '',
+    published_date: raw.published_date || raw.date || raw.age || '',
+    provider,
+  };
+}
+
 async function braveSearchOne(query, apiKey) {
   const json = await fetchSearchApi(
     `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`,
@@ -1102,7 +1164,7 @@ async function braveSearchOne(query, apiKey) {
     'Brave Search'
   );
   const results = json.web?.results || [];
-  return results.slice(0, 5).map(r => ({ title: r.title || '', url: r.url || '', snippet: r.description || '' }));
+  return results.slice(0, 5).map(r => normalizeSearchResult(r, 'brave'));
 }
 
 async function serperSearchOne(query, apiKey) {
@@ -1112,7 +1174,7 @@ async function serperSearchOne(query, apiKey) {
     'Serper.dev'
   );
   const results = json.organic || [];
-  return results.slice(0, 5).map(r => ({ title: r.title || '', url: r.link || '', snippet: r.snippet || '' }));
+  return results.slice(0, 5).map(r => normalizeSearchResult(r, 'serper'));
 }
 
 async function tavilySearchOne(query, apiKey) {
@@ -1122,10 +1184,10 @@ async function tavilySearchOne(query, apiKey) {
     'Tavily'
   );
   const results = json.results || [];
-  return results.slice(0, 5).map(r => ({ title: r.title || '', url: r.url || '', snippet: r.content || '' }));
+  return results.slice(0, 5).map(r => normalizeSearchResult(r, 'tavily'));
 }
 
-// 按用户选择的搜索服务商分发到对应 adapter，统一返回 {title, url, snippet}[] 结构
+// 按用户选择的搜索服务商分发到对应 adapter，统一返回 normalizeSearchResult() 结构的数组
 async function searchWeb(query, providerId, apiKey) {
   if (providerId === 'brave') return braveSearchOne(query, apiKey);
   if (providerId === 'serper') return serperSearchOne(query, apiKey);
@@ -1133,7 +1195,24 @@ async function searchWeb(query, providerId, apiKey) {
   throw new Error(`未知的搜索服务商：${providerId}`);
 }
 
-// 对一小批公司依次做搜索，收集真实检索结果供 LLM 依据；单家公司失败不阻断整体，仅记录错误
+// 强化搜索召回：不再只用单一 query，覆盖首付款/里程碑、并购公告、中文授权/并购关键词，以及 site:官网域名（如已配置）；
+// 不照抄文档里全部10+条示例query，控制在5条以内以避免请求量爆炸
+function buildBdSearchQueries(company) {
+  const queries = [
+    `${company.name} license agreement upfront milestone`,
+    `${company.name} acquisition OR "asset acquisition" announced`,
+  ];
+  const cnName = (company.aliases || []).find(a => /[一-龥]/.test(a)) || company.name;
+  queries.push(`${cnName} 授权 引进 首付款 里程碑`);
+  queries.push(`${cnName} 并购 收购 公告`);
+  if (company.officialDomains && company.officialDomains.length) {
+    queries.push(`site:${company.officialDomains[0]} license agreement OR acquisition OR collaboration`);
+  }
+  return queries;
+}
+
+// 对一小批公司依次做搜索：每家公司跑完 buildBdSearchQueries() 的全部 query，按 URL 去重后再喂给 LLM，
+// 避免同一链接因命中多条 query 而重复消耗上下文。单家公司全部 query 都失败不阻断整体，仅记录错误
 // bdSearchProgress.current 是跨批次累加的全局进度，由调用方在整个刷新流程开始时初始化好
 // 这一批全部失败时（通常意味着 Key 无效/网络不通）直接抛错，避免带着完全空的上下文继续跑模型
 async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
@@ -1145,19 +1224,31 @@ async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
       bdSearchProgress = { ...bdSearchProgress, phase: 'searching', companyName: c.name };
       renderBdSearchProgress();
     }
-    try {
-      const query = `${c.name} license agreement OR acquisition OR partnership BD deal 2026`;
-      const r = await searchWeb(query, providerId, apiKey);
-      results.push({ company: c.name, results: r });
-    } catch (err) {
-      results.push({ company: c.name, results: [] });
-      partialErrors.push(`${c.name}: ${err.message}`);
+    const queries = buildBdSearchQueries(c);
+    const seenUrls = new Set();
+    const dedupedResults = [];
+    const companyErrors = [];
+    for (const query of queries) {
+      try {
+        const r = await searchWeb(query, providerId, apiKey);
+        for (const item of r) {
+          if (!item.url || seenUrls.has(item.url)) continue;
+          seenUrls.add(item.url);
+          dedupedResults.push(item);
+        }
+      } catch (err) {
+        companyErrors.push(err.message);
+      }
+      await sleep(1100); // 避免触发搜索服务商免费额度的每秒请求限制
+    }
+    results.push({ company: c.name, results: dedupedResults });
+    if (companyErrors.length === queries.length) {
+      partialErrors.push(`${c.name}: ${companyErrors[0]}`);
     }
     if (bdSearchProgress) {
       bdSearchProgress = { ...bdSearchProgress, current: bdSearchProgress.current + 1 };
       renderBdSearchProgress();
     }
-    await sleep(1100); // 避免触发搜索服务商免费额度的每秒请求限制
   }
   if (partialErrors.length === batch.length) {
     const e = new Error(`${providerLabel} 请求失败，请检查 API Key 或网络（示例：${partialErrors[0]}）`);
@@ -1167,14 +1258,16 @@ async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
   return { results, partialErrors };
 }
 
-const DEAL_TYPE_CANON = ['License-in', 'License-out', '并购', '战略合作'];
-
-// 把模型返回的自由文本交易类型对齐到筛选下拉菜单里的固定选项，避免"合并"vs"并购"这类措辞差异导致筛选漏判
+// 把模型返回的自由文本交易类型对齐到固定枚举，避免"合并"vs"并购"这类措辞差异导致筛选/合并判断漏判
 function normalizeDealType(raw) {
   const s = String(raw || '').toLowerCase();
+  if (/资产收购|asset acquisition/.test(s)) return '资产收购';
+  if (/并购|收购|merger|acquisition|m&a/.test(s)) return '并购';
   if (/license.?-?\s*in|引进|授权引进/.test(s)) return 'License-in';
   if (/license.?-?\s*out|引出|授出|授权引出/.test(s)) return 'License-out';
-  if (/并购|收购|merger|acquisition|m&a/.test(s)) return '并购';
+  if (/option.{0,3}(to.{0,3})?license|期权|option\s*交易/.test(s)) return 'Option交易';
+  if (/co-?\s*development|共同开发|联合开发/.test(s)) return '共同开发';
+  if (/co-?\s*commercial|共同商业化|联合商业化/.test(s)) return '共同商业化';
   if (/合作|合资|战略|partnership|collaboration|alliance/.test(s)) return '战略合作';
   return raw || 'N/A'; // 未识别出已知类型时保留原文，不直接丢弃
 }
@@ -1192,7 +1285,17 @@ function normalizeDealRecord(raw, source) {
   }
   record.pharma = resolveCompanyName(record.pharma);
   record.deal_type = normalizeDealType(record.deal_type);
+  if (!CONFIG.BD_SOURCE_TYPES.includes(record.source_type)) record.source_type = source === 'manual' ? '手动导入' : '媒体报道';
+  if (!CONFIG.AI_EVIDENCE_LEVELS.includes(record.evidence_level)) record.evidence_level = source === 'manual' ? '中' : '低';
+  if (record.rights_scope === 'N/A') record.rights_scope = '未披露';
+  record.sources = Array.isArray(raw.sources) && raw.sources.length
+    ? raw.sources.map(s => ({
+        title: s.title || record.asset, url: s.url || record.source_url, type: s.type || record.source_type,
+        published_date: s.published_date || 'N/A', provider: s.provider || 'N/A',
+      }))
+    : [{ title: record.asset, url: record.source_url, type: record.source_type, published_date: 'N/A', provider: 'N/A' }];
   if (!record.deal_id || record.deal_id === 'N/A') record.deal_id = generateDealId(record);
+  if (!record.dedupe_key || record.dedupe_key === 'N/A') record.dedupe_key = record.deal_id;
   record.source = source; // 'auto' | 'manual'
   return record;
 }
@@ -1200,6 +1303,142 @@ function normalizeDealRecord(raw, source) {
 function generateDealId(record) {
   const base = normalizeCompanyName(`${record.pharma}_${record.partner}_${record.date}`);
   return base || `deal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// 从一个"优先级从高到低排列"的数组中，挑出两个值里排名更靠前的那个；任一值不在数组里则返回另一个
+// AI合作板块的方向/证据等级择优也复用这个通用函数
+function pickByPriorityOrder(a, b, order) {
+  const ia = order.indexOf(a), ib = order.indexOf(b);
+  if (ia === -1) return b;
+  if (ib === -1) return a;
+  return ia <= ib ? a : b;
+}
+
+// 归一化交易对手方名称：小写、去标点、去常见公司后缀、去空格
+function normalizePartnerName(name) {
+  if (!name) return '';
+  let n = String(name).toLowerCase().trim();
+  n = n.replace(/[.,、，。]/g, '');
+  const suffixPattern = new RegExp(`\\b(${CONFIG.BD_PARTNER_SUFFIXES.join('|')})\\b`, 'g');
+  n = n.replace(suffixPattern, '');
+  n = n.replace(/\s+/g, '');
+  return n;
+}
+
+// 归一化标的资产名称：小写、去标点、去空格（药物代号空格差异等），不做公司后缀剥离
+function normalizeAssetName(name) {
+  if (!name) return '';
+  return String(name).toLowerCase().trim().replace(/[.,、，。]/g, '').replace(/\s+/g, '');
+}
+
+const BD_SOURCE_TYPE_PRIORITY = ['公司公告', '交易对手方公告', '监管/交易所公告', '媒体报道', '手动导入', '其他'];
+function bdSourceTypePriority(type) {
+  const idx = BD_SOURCE_TYPE_PRIORITY.indexOf(type);
+  return idx === -1 ? BD_SOURCE_TYPE_PRIORITY.length : idx;
+}
+
+// 判断两条记录是否为同一交易：pharma 精确一致 + partner 归一化后相同/互相包含 + 若双方都有明确 asset 则也要相似
+// （同一对伙伴可能有多笔不同交易，asset 完全不相似时不应合并）+ 日期在30天窗口内；日期未知时仅凭 pharma+partner+asset 判断
+function isSameDeal(a, b) {
+  if (a.pharma !== b.pharma) return false;
+  const partnerA = normalizePartnerName(a.partner), partnerB = normalizePartnerName(b.partner);
+  if (!partnerA || !partnerB) return false;
+  const partnerMatch = partnerA === partnerB || partnerA.includes(partnerB) || partnerB.includes(partnerA);
+  if (!partnerMatch) return false;
+  const assetA = normalizeAssetName(a.asset), assetB = normalizeAssetName(b.asset);
+  if (assetA && assetB) {
+    const assetMatch = assetA === assetB || assetA.includes(assetB) || assetB.includes(assetA);
+    if (!assetMatch) return false;
+  }
+  const dateA = a.date && a.date !== 'N/A' ? new Date(a.date).getTime() : null;
+  const dateB = b.date && b.date !== 'N/A' ? new Date(b.date).getTime() : null;
+  if (dateA && dateB) {
+    return Math.abs(dateA - dateB) / 86400000 <= CONFIG.BD_DEDUPE_DATE_WINDOW_DAYS;
+  }
+  return true;
+}
+
+function findMatchingDealIndex(list, candidate) {
+  return list.findIndex(item => isSameDeal(item, candidate));
+}
+
+// 来源合并：按 URL（无 URL 则按标题）去重，两边来源都保留
+function mergeDealSources(existingSources, incomingSources) {
+  const seen = new Set();
+  const merged = [];
+  for (const s of [...(existingSources || []), ...(incomingSources || [])]) {
+    const key = s.url || s.title;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(s);
+  }
+  return merged;
+}
+
+// 字段择优通用规则：未知值（N/A/未披露/空）永远让位给已知值；两边都已知则取来源更可信的一方；都未知则保留原值
+const BD_UNKNOWN_FIELD_VALUES = new Set(['N/A', '未披露', '']);
+function pickMoreTrustedFieldValue(existing, incoming, existingSourceType, incomingSourceType) {
+  const existingUnknown = BD_UNKNOWN_FIELD_VALUES.has(existing);
+  const incomingUnknown = BD_UNKNOWN_FIELD_VALUES.has(incoming);
+  if (existingUnknown && !incomingUnknown) return incoming;
+  if (!existingUnknown && incomingUnknown) return existing;
+  if (existingUnknown && incomingUnknown) return existing;
+  return bdSourceTypePriority(incomingSourceType) < bdSourceTypePriority(existingSourceType) ? incoming : existing;
+}
+
+// 日期代表交易首次宣布日期而非转载日期：优先取更可信来源的日期；同等可信度取更早日期；一方未知取已知一方；
+// date 与 date_basis 必须同步更新，避免两者对不上
+function pickBetterDealDate(existing, incoming) {
+  const existingKnown = existing.date && existing.date !== 'N/A';
+  const incomingKnown = incoming.date && incoming.date !== 'N/A';
+  if (!existingKnown && incomingKnown) return { date: incoming.date, date_basis: incoming.date_basis };
+  if (existingKnown && !incomingKnown) return { date: existing.date, date_basis: existing.date_basis };
+  if (!existingKnown && !incomingKnown) return { date: 'N/A', date_basis: 'N/A' };
+  if (bdSourceTypePriority(existing.source_type) < bdSourceTypePriority(incoming.source_type)) {
+    return { date: existing.date, date_basis: existing.date_basis };
+  }
+  if (bdSourceTypePriority(incoming.source_type) < bdSourceTypePriority(existing.source_type)) {
+    return { date: incoming.date, date_basis: incoming.date_basis };
+  }
+  return existing.date <= incoming.date ? { date: existing.date, date_basis: existing.date_basis } : { date: incoming.date, date_basis: incoming.date_basis };
+}
+
+// 合并两条被判定为同一交易的记录：deal_type 取更具体的、evidence_level 取最高、sources 合并去重、
+// date/date_basis 同步更新、asset/rights_scope/stage/upfront/total_value 按来源可信度择优（首付款与总额分开处理，不会互相混淆）、
+// 主来源按 source_type 优先级择优（手动导入无URL时不覆盖已有可点击主来源）
+function mergeDealRecords(existing, incoming) {
+  const mergedSources = mergeDealSources(existing.sources, incoming.sources);
+  const incomingHasUrl = incoming.source_url && incoming.source_url !== 'N/A' && incoming.source_url !== 'manual_import';
+  const incomingIsBetterPrimary = incomingHasUrl && bdSourceTypePriority(incoming.source_type) < bdSourceTypePriority(existing.source_type);
+  const { date, date_basis } = pickBetterDealDate(existing, incoming);
+  return {
+    ...existing,
+    date, date_basis,
+    deal_type: pickByPriorityOrder(existing.deal_type, incoming.deal_type, CONFIG.BD_DEAL_TYPE_SPECIFICITY),
+    asset: pickMoreTrustedFieldValue(existing.asset, incoming.asset, existing.source_type, incoming.source_type),
+    rights_scope: pickMoreTrustedFieldValue(existing.rights_scope, incoming.rights_scope, existing.source_type, incoming.source_type),
+    stage: pickMoreTrustedFieldValue(existing.stage, incoming.stage, existing.source_type, incoming.source_type),
+    upfront: pickMoreTrustedFieldValue(existing.upfront, incoming.upfront, existing.source_type, incoming.source_type),
+    total_value: pickMoreTrustedFieldValue(existing.total_value, incoming.total_value, existing.source_type, incoming.source_type),
+    source_url: incomingIsBetterPrimary ? incoming.source_url : existing.source_url,
+    source_type: incomingIsBetterPrimary ? incoming.source_type : existing.source_type,
+    evidence_level: pickByPriorityOrder(existing.evidence_level, incoming.evidence_level, CONFIG.AI_EVIDENCE_LEVELS),
+    sources: mergedSources,
+    // 保留最初发现该交易时的来源分类（auto/manual），手动导入命中已有条目时只作为补充来源，不改变卡片本身的分类
+    source: existing.source,
+  };
+}
+
+// 用去重合并逻辑重新计算完整列表：从"手动条目 + 已有自动条目"出发，依次把新结果去重合并进去；
+// 每次调用都从 previousDeals 完整重放一遍，保证任意中间状态都是正确的合并结果
+function mergeDealLists(previousDeals, newlyFetchedDeals) {
+  const merged = [...previousDeals];
+  for (const incoming of newlyFetchedDeals) {
+    const idx = findMatchingDealIndex(merged, incoming);
+    if (idx === -1) merged.push(incoming);
+    else merged[idx] = mergeDealRecords(merged[idx], incoming);
+  }
+  return merged;
 }
 
 // 处理一小批（默认 1 家）公司：先搜索（若配置了搜索 Key）再让大模型基于这批公司提取交易
@@ -1238,34 +1477,6 @@ async function fetchBdDealsForBatch(batch, s, lookbackDays) {
   return { deals: list.map(d => normalizeDealRecord(d, 'auto')), partialErrors };
 }
 
-// 自动搜索结果与已有列表合并：手动导入的交易始终保留，自动结果按 deal_id 去重（撞车时让位给手动条目）
-function mergeAutoDeals(existingDeals, newAutoDeals) {
-  const manualDeals = existingDeals.filter(d => d.source === 'manual');
-  const manualIds = new Set(manualDeals.map(d => d.deal_id));
-  const seenAutoIds = new Set();
-  const dedupedAuto = [];
-  for (const d of newAutoDeals) {
-    if (manualIds.has(d.deal_id) || seenAutoIds.has(d.deal_id)) continue;
-    seenAutoIds.add(d.deal_id);
-    dedupedAuto.push(d);
-  }
-  return [...manualDeals, ...dedupedAuto];
-}
-
-// 手动解析出的交易追加进列表，deal_id 与已有条目撞车时自动加后缀避免覆盖
-function addManualDeals(existingDeals, parsedManualDeals) {
-  const existingIds = new Set(existingDeals.map(d => d.deal_id));
-  const toAdd = [];
-  for (const d of parsedManualDeals) {
-    let id = d.deal_id;
-    while (existingIds.has(id)) id = id + '_2';
-    d.deal_id = id;
-    existingIds.add(id);
-    toAdd.push(d);
-  }
-  return [...existingDeals, ...toAdd];
-}
-
 function sortDealsByDateDesc(deals) {
   return [...deals].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 }
@@ -1290,14 +1501,16 @@ async function processBdBatch(batch, previousDeals, newlyFetchedDeals, lookbackD
     bdErrorMessages.push(`[${names}] ${err.message}${err.raw ? '（原始返回：' + String(err.raw).slice(0, 150) + '…）' : ''}`);
   }
 
-  const merged = sortDealsByDateDesc(mergeAutoDeals(previousDeals, newlyFetchedDeals));
-  bdCacheData = { updatedAt: new Date().toISOString(), deals: merged };
+  const merged = sortDealsByDateDesc(mergeDealLists(previousDeals, newlyFetchedDeals));
+  bdCacheData = { updatedAt: new Date().toISOString(), lookbackDays, deals: merged };
   saveBdCacheToStorage(bdCacheData);
 
   renderBdErrorBanner();
   renderBdToolbar();
   populateBdCompanyFilter();
   populateBdTypeFilter();
+  populateBdEvidenceFilter();
+  populateBdSourceTypeFilter();
   renderBdDealList();
 }
 
@@ -1355,14 +1568,30 @@ function updateBdRefreshButtonState(loading) {
 // ==================== BD & 并购：第二级 - 深挖分析 ====================
 
 function buildDealDetailMessages(deal) {
-  const sys = '你是一位医药行业资深 BD 分析师，擅长解读交易逻辑与战略意图。除公司名、产品名/药物代号、靶点缩写等专有名词外，所有描述性文字请用中文表达，哪怕信息源是英文。';
-  const schema = '{"target_info":{"target":"靶点","indication":"适应症（中文）","phase":"研发阶段","mechanism":"作用机制（中文描述）"},"deal_terms":{"upfront":"首付款","milestones":["里程碑条款列表（中文描述）"],"royalty":"特许权使用费（如披露）"},"rationale":"为什么发生这笔交易？（中文，100字内）","pricing_logic":"为什么值这个价格？（中文，参考同类交易对比，100字内）","strategic_fit":"与收购方现有管线/战略的协同点（中文，100字内）","risks":"潜在风险或值得关注的点（中文，50字内）","sources":["来源URL列表，找不到真实来源就返回空数组，不要编造"]}';
-  const user = `请深度分析以下 BD 交易：\n交易方：${deal.pharma} × ${deal.partner}\n标的：${deal.asset}，类型：${deal.deal_type}，金额：${deal.upfront} 首付 / ${deal.total_value} 总额\n\n请搜索该交易的公开披露信息（SEC 8-K、公司公告、媒体报道），输出严格 JSON 对象，字段 schema：${schema}\n所有描述性字段请用中文作答；缺失信息填 "N/A"，不要编造具体数字或来源链接。不要有任何额外文字、不要使用 markdown 代码块。`;
+  const sys = `你是一位医药行业资深 BD 分析师，擅长解读授权、并购、资产收购、共同开发和商业化合作交易的交易逻辑与战略意图。
+请基于公开来源进行分析，并严格区分事实与分析性推断。
+要求：
+- 不要编造未披露的事实；
+- 不要编造来源链接；
+- 不要把总交易额误写成首付款；
+- 如果公开信息没有披露具体金额、权益范围、适应症、研发阶段、版税或合作期限，请明确说明「公开信息未披露」；
+- 对交易动机、定价逻辑和战略协同的分析可以是推断，但必须使用「可能」「体现出」「或许说明」等谨慎表述；
+- 所有来源必须是真实链接；
+- 优先使用公司公告、交易对手方公告、SEC/交易所公告和权威媒体；
+- 除公司名、产品名、药物代号、靶点缩写和专业术语外，描述性文字请使用中文。`;
+
+  const schema = '{"deal_summary":"这笔交易的核心内容，80字内","target_info":{"target":"靶点/技术平台/资产名称；未知填 N/A","indication":"适应症，中文；未知填 N/A","phase":"研发阶段；未知填 N/A","mechanism":"作用机制，中文；未知填 N/A"},"deal_terms":{"upfront":"首付款；未披露填 N/A","total_value":"总交易额；未披露填 N/A","milestones":["里程碑条款列表；未披露则为空数组"],"royalty":"特许权使用费；未披露填 N/A","rights_scope":"权益范围；未披露填 N/A"},"rationale":"为什么可能发生这笔交易，100字内","pricing_logic":"为什么可能值这个价格，100字内；如信息不足则说明无法判断","strategic_fit":"与药企现有管线/治疗领域/商业化战略的协同点，100字内；信息不足则说明无法判断","risks":"潜在风险或值得关注的点，80字内","comparable_deals":["1-2个同类交易；如无可靠信息则为空数组"],"missing_info":["公开信息未披露的信息点"],"confidence":"高 | 中 | 低","sources":[{"title":"来源标题","url":"来源URL","type":"公司公告 | 交易对手方公告 | 监管/交易所公告 | 媒体报道 | 其他"}]}';
+
+  const sourcesText = (deal.sources || []).map(s => `- ${s.title || ''}（${s.type || ''}）：${s.url || ''}`).join('\n') || '（无）';
+
+  const user = `请深度分析以下 BD 交易：\n\n药企：${deal.pharma}\n交易对手方：${deal.partner}\n交易类型：${deal.deal_type}\n标的：${deal.asset}\n权益范围：${deal.rights_scope}\n研发阶段：${deal.stage}\n首付款：${deal.upfront}\n总交易额：${deal.total_value}\n宣布日期：${deal.date}\n日期依据：${deal.date_basis}\n主来源：${deal.source_url}\n全部已知来源：\n${sourcesText}\n\n请优先搜索和参考：\n1. 药企官网新闻稿 / Investor Relations；\n2. 交易对手方官网新闻稿；\n3. SEC 8-K / 10-Q / 10-K；\n4. 港交所 / 上交所 / 深交所公告；\n5. Reuters、FierceBiotech、BioPharma Dive、Endpoints 等可信媒体；\n6. 若存在多个来源，请优先使用公司公告和监管/交易所公告。\n\n请输出严格 JSON，字段 schema：${schema}\n不要输出 markdown。不要输出 JSON 之外的解释文字。不要编造未披露信息。`;
+
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
 function normalizeDealDetail(raw) {
   return {
+    deal_summary: raw.deal_summary || 'N/A',
     target_info: {
       target: raw.target_info?.target || 'N/A',
       indication: raw.target_info?.indication || 'N/A',
@@ -1371,33 +1600,30 @@ function normalizeDealDetail(raw) {
     },
     deal_terms: {
       upfront: raw.deal_terms?.upfront || 'N/A',
+      total_value: raw.deal_terms?.total_value || 'N/A',
       milestones: Array.isArray(raw.deal_terms?.milestones) ? raw.deal_terms.milestones : [],
       royalty: raw.deal_terms?.royalty || 'N/A',
+      rights_scope: raw.deal_terms?.rights_scope || 'N/A',
     },
     rationale: raw.rationale || 'N/A',
     pricing_logic: raw.pricing_logic || 'N/A',
     strategic_fit: raw.strategic_fit || 'N/A',
     risks: raw.risks || 'N/A',
+    comparable_deals: Array.isArray(raw.comparable_deals) ? raw.comparable_deals : [],
+    missing_info: Array.isArray(raw.missing_info) ? raw.missing_info : [],
+    confidence: CONFIG.AI_EVIDENCE_LEVELS.includes(raw.confidence) ? raw.confidence : 'N/A',
     sources: Array.isArray(raw.sources) ? raw.sources : [],
   };
 }
 
-async function handleDeepDive(dealId) {
+// forceReanalyze=true 时忽略缓存直接重新请求（"🔄 重新分析"按钮），否则命中缓存直接展示 + 支持手风琴收起
+async function handleDeepDive(dealId, forceReanalyze) {
   const deal = (bdCacheData?.deals || []).find(d => d.deal_id === dealId);
   if (!deal) return;
 
-  // 已展开则收起（手风琴效果）
-  if (expandedDealId === dealId) {
-    expandedDealId = null;
-    renderBdDealList();
-    return;
-  }
-
-  // 命中缓存直接展示，不重复调用 API
-  if (bdDetailCache[dealId]) {
-    expandedDealId = dealId;
-    renderBdDealList();
-    return;
+  if (!forceReanalyze) {
+    if (expandedDealId === dealId) { expandedDealId = null; renderBdDealList(); return; }
+    if (bdDetailCache[dealId]) { expandedDealId = dealId; renderBdDealList(); return; }
   }
 
   expandedDealId = dealId;
@@ -1406,9 +1632,9 @@ async function handleDeepDive(dealId) {
 
   try {
     const parsed = await callLLM(buildDealDetailMessages(deal), settings);
-    bdDetailCache[dealId] = normalizeDealDetail(parsed);
+    bdDetailCache[dealId] = { updatedAt: new Date().toISOString(), detail: normalizeDealDetail(parsed) };
   } catch (err) {
-    bdDetailCache[dealId] = { _error: true, _errorMessage: err.message };
+    bdDetailCache[dealId] = { updatedAt: new Date().toISOString(), detail: { _error: true, _errorMessage: err.message } };
   }
   saveBdDetailCacheToStorage(bdDetailCache);
 
@@ -1419,9 +1645,19 @@ async function handleDeepDive(dealId) {
 // ==================== BD & 并购：粘贴原文解析 ====================
 
 function buildPasteParseMessages(rawText) {
-  const sys = '你是一位医药行业资深 BD 分析师，擅长从文章中提取 BD 交易信息。除公司名、产品名/药物代号等专有名词外，所有描述性文字请用中文表达，哪怕原文是英文。';
-  const schema = '{"deal_id":"唯一标识（公司名+日期缩写）","date":"宣布日期(YYYY-MM-DD，无法确定就填N/A)","pharma":"药企方","partner":"交易对手方","deal_type":"License-in|License-out|并购|战略合作","asset":"标的资产/产品/管线名称（用中文描述，专有名词/药物代号可保留英文）","upfront":"首付款（未披露填N/A）","total_value":"交易总额（未披露填N/A）","source_url":"固定填 N/A（此来源为用户手动粘贴，无原始链接）"}';
-  const user = `请从下面这段文章原文中提取其中提到的所有 BD 交易信息（可能有多条），输出严格 JSON 对象：{"deals":[交易列表，字段如下]}，字段 schema：${schema}\n如果文章里没有任何 BD 交易信息，返回 {"deals":[]}。只提取原文中明确提到的信息，不要编造原文没有的内容；描述性字段请用中文表达，即使原文是英文。不要有任何额外文字、不要使用 markdown 代码块。\n\n文章原文：\n"""\n${rawText.slice(0, 8000)}\n"""`;
+  const sys = `你是一位医药行业资深 BD 分析师，擅长从文章、新闻稿、公司公告和行业报道中提取 BD 交易信息。
+请只基于用户粘贴的原文提取信息。不要使用外部知识补充事实。不要编造公司、交易、日期、金额或链接。
+请遵守以下纳入标准：
+1. 必须有药企方；
+2. 必须有外部交易对手方；
+3. 必须涉及授权、并购、资产收购、option-to-license、共同开发、共同商业化或有明确资产/权益范围的战略合作；
+4. 如果只是普通新闻、融资、临床进展、获批或产品上市，不要提取为 BD 交易；
+5. 未披露的信息必须填 N/A，不得补全或估算。
+除公司名、产品名、药物代号、靶点缩写和专业术语外，描述性文字请使用中文。`;
+
+  const schema = '{"deal_id":"唯一标识，建议使用 pharma_partner_asset_date_manual","dedupe_key":"用于去重的稳定键","date":"宣布日期，YYYY-MM-DD；无法判断填 N/A","date_basis":"原文日期 | N/A","pharma":"药企方","partner":"交易对手方","deal_type":"License-in | License-out | 并购 | 资产收购 | Option交易 | 共同开发 | 共同商业化 | 战略合作 | 其他","asset":"标的资产/产品/管线/平台/公司名称","rights_scope":"全球 | 大中华区 | 中国大陆 | 美国 | 欧洲 | 特定区域 | 未披露","stage":"Discovery | Preclinical | Ph1 | Ph2 | Ph3 | Approved | Commercial | Platform | N/A","upfront":"首付款；未披露填 N/A","total_value":"交易总额；未披露填 N/A","source_url":"如果原文提供URL则填写；否则填 manual_import","source_type":"手动导入","evidence_level":"中","sources":[{"title":"手动导入","url":"manual_import","type":"手动导入","published_date":"N/A","provider":"manual"}]}';
+
+  const user = `以下是用户粘贴的文章或资料原文。请从中提取 BD&并购交易信息。\n如果原文中没有明确 BD 交易信息，请返回空数组。\n请返回严格 JSON：{"deals":[交易列表，字段如下]}，字段 schema：${schema}\n不要输出 markdown。不要输出 JSON 之外的解释文字。不要编造信息。\n\n文章原文：\n"""\n${rawText.slice(0, 8000)}\n"""`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
 }
 
@@ -1450,15 +1686,23 @@ async function handlePasteParseSubmit() {
     }
     const manualDeals = list.map(d => normalizeDealRecord(d, 'manual'));
     const existing = bdCacheData?.deals || [];
-    const merged = sortDealsByDateDesc(addManualDeals(existing, manualDeals));
-    bdCacheData = { updatedAt: bdCacheData?.updatedAt || new Date().toISOString(), deals: merged };
+    let addedCount = 0, mergedCount = 0;
+    const merged = [...existing];
+    for (const incoming of manualDeals) {
+      const idx = findMatchingDealIndex(merged, incoming);
+      if (idx === -1) { addedCount++; merged.push(incoming); }
+      else { mergedCount++; merged[idx] = mergeDealRecords(merged[idx], incoming); }
+    }
+    bdCacheData = { updatedAt: bdCacheData?.updatedAt || new Date().toISOString(), lookbackDays: bdCacheData?.lookbackDays || CONFIG.BD_LOOKBACK_DAYS, deals: sortDealsByDateDesc(merged) };
     saveBdCacheToStorage(bdCacheData);
-    status.textContent = `✅ 已识别 ${manualDeals.length} 条交易并合并入列表`;
+    status.textContent = `✅ 已识别 ${manualDeals.length} 条：新增 ${addedCount} 条，合并进已有条目 ${mergedCount} 条`;
     status.className = 'text-sm h-5 text-emerald-600 dark:text-emerald-400';
     document.getElementById('bdPasteInput').value = '';
     renderBdToolbar();
     populateBdCompanyFilter();
     populateBdTypeFilter();
+    populateBdEvidenceFilter();
+    populateBdSourceTypeFilter();
     renderBdDealList();
     setTimeout(closeBdPasteModal, 1500);
   } catch (err) {
@@ -1486,15 +1730,28 @@ function dealTypeCls(type) {
     'License-in': 'bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300',
     'License-out': 'bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300',
     '并购': 'bg-rose-50 dark:bg-rose-900/40 text-rose-600 dark:text-rose-300',
+    '资产收购': 'bg-pink-50 dark:bg-pink-900/40 text-pink-600 dark:text-pink-300',
+    'Option交易': 'bg-cyan-50 dark:bg-cyan-900/40 text-cyan-600 dark:text-cyan-300',
+    '共同开发': 'bg-teal-50 dark:bg-teal-900/40 text-teal-600 dark:text-teal-300',
+    '共同商业化': 'bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300',
     '战略合作': 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300',
   };
   return map[type] || 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300';
+}
+
+function bdEvidenceCls(level) {
+  if (level === '高') return 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300';
+  if (level === '中') return 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300';
+  if (level === '低') return 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300';
+  return 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400';
 }
 
 function getFilteredBdDeals() {
   let list = bdCacheData?.deals || [];
   if (bdFilterCompany !== 'all') list = list.filter(d => d.pharma === bdFilterCompany);
   if (bdFilterType !== 'all') list = list.filter(d => d.deal_type === bdFilterType);
+  if (bdFilterEvidenceLevel !== 'all') list = list.filter(d => d.evidence_level === bdFilterEvidenceLevel);
+  if (bdFilterSourceType !== 'all') list = list.filter(d => d.source_type === bdFilterSourceType);
   return list;
 }
 
@@ -1506,34 +1763,72 @@ function dealDetailBlockHtml(dealId) {
       <div class="skeleton h-4 w-full rounded"></div>
     </div>`;
   }
-  const detail = bdDetailCache[dealId];
-  if (!detail) return '';
+  const cached = bdDetailCache[dealId];
+  if (!cached) return '';
+  const detail = cached.detail;
   if (detail._error) {
-    return `<div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 text-sm text-rose-600 dark:text-rose-400">❌ 深挖分析失败：${escapeHtml(detail._errorMessage)}</div>`;
+    return `<div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 text-sm text-rose-600 dark:text-rose-400 flex items-center justify-between gap-2">
+      <span>❌ 深挖分析失败：${escapeHtml(detail._errorMessage)}</span>
+      <button data-bd-reanalyze="${escapeHtml(dealId)}" class="shrink-0 text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700">🔄 重试</button>
+    </div>`;
   }
   const milestones = detail.deal_terms.milestones.length
     ? detail.deal_terms.milestones.map(m => `<li>${escapeHtml(m)}</li>`).join('')
     : '<li class="text-slate-400">待确认</li>';
+  const comparableDeals = detail.comparable_deals.length
+    ? detail.comparable_deals.map(d => `<li>${escapeHtml(d)}</li>`).join('')
+    : '<li class="text-slate-400">暂无</li>';
+  const missingInfo = detail.missing_info.length
+    ? detail.missing_info.map(m => `<li>${escapeHtml(m)}</li>`).join('')
+    : '<li class="text-slate-400">无</li>';
   const sources = detail.sources.length
-    ? detail.sources.map(u => `<a href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline block truncate">${escapeHtml(u)}</a>`).join('')
+    ? detail.sources.map(s => `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline block truncate">${escapeHtml(s.title || s.url)}（${escapeHtml(s.type || '')}）</a>`).join('')
     : '<div class="text-slate-400">待确认</div>';
+  const pricingLogicText = (!detail.pricing_logic || detail.pricing_logic === 'N/A')
+    ? '公开信息不足，暂无法判断定价合理性。'
+    : formatFieldValue(detail.pricing_logic);
   return `
     <div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3 text-sm">
+      <div class="flex items-center justify-between">
+        <span class="text-xs text-slate-400">分析生成于：${formatDateTime(cached.updatedAt)}</span>
+        <button data-bd-reanalyze="${escapeHtml(dealId)}" class="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700">🔄 重新分析</button>
+      </div>
       <div>
-        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">📋 交易条款</div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🧾 交易概览</div>
         <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
-          <div>靶点：${escapeHtml(formatFieldValue(detail.target_info.target))} ｜ 适应症：${escapeHtml(formatFieldValue(detail.target_info.indication))} ｜ 阶段：${escapeHtml(formatFieldValue(detail.target_info.phase))}</div>
+          <div>${escapeHtml(formatFieldValue(detail.deal_summary))}</div>
+          <div>标的：${escapeHtml(formatFieldValue(detail.target_info.target))} ｜ 适应症：${escapeHtml(formatFieldValue(detail.target_info.indication))} ｜ 阶段：${escapeHtml(formatFieldValue(detail.target_info.phase))}</div>
           <div>作用机制：${escapeHtml(formatFieldValue(detail.target_info.mechanism))}</div>
-          <div>首付款：${escapeHtml(formatFieldValue(detail.deal_terms.upfront))} ｜ 特许权使用费：${escapeHtml(formatFieldValue(detail.deal_terms.royalty))}</div>
+          <div>首付款：${escapeHtml(formatFieldValue(detail.deal_terms.upfront))} ｜ 总额：${escapeHtml(formatFieldValue(detail.deal_terms.total_value))} ｜ 权益范围：${escapeHtml(formatFieldValue(detail.deal_terms.rights_scope))}</div>
+          <div>特许权使用费：${escapeHtml(formatFieldValue(detail.deal_terms.royalty))}</div>
           <div>里程碑条款：<ul class="list-disc list-inside">${milestones}</ul></div>
         </div>
       </div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💡 交易逻辑</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.rationale))}</div></div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💰 定价分析</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.pricing_logic))}</div></div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🔗 战略协同</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.strategic_fit))}</div></div>
-      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">⚠️ 风险提示</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.risks))}</div></div>
       <div>
-        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">来源</div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🎯 交易动机</div>
+        <div class="text-xs text-slate-400 mb-1">以下为基于公开信息的分析性判断，不代表双方官方表述。</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>${escapeHtml(formatFieldValue(detail.rationale))}</div>
+          <div>战略协同：${escapeHtml(formatFieldValue(detail.strategic_fit))}</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💰 定价逻辑</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>${escapeHtml(pricingLogicText)}</div>
+          <div>同类参考：<ul class="list-disc list-inside">${comparableDeals}</ul></div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">⚠️ 风险与不确定性</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>${escapeHtml(formatFieldValue(detail.risks))}</div>
+          <div>信息完整度：${escapeHtml(formatFieldValue(detail.confidence))}</div>
+          <div>未披露信息：<ul class="list-disc list-inside">${missingInfo}</ul></div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🔗 来源链接</div>
         <div class="space-y-0.5">${sources}</div>
       </div>
     </div>`;
@@ -1542,21 +1837,30 @@ function dealDetailBlockHtml(dealId) {
 function dealCardHtml(deal) {
   const typeCls = dealTypeCls(deal.deal_type);
   const isExpanded = expandedDealId === deal.deal_id;
-  const hasSourceUrl = deal.source_url && deal.source_url !== 'N/A';
+  const hasSourceUrl = deal.source_url && deal.source_url !== 'N/A' && deal.source_url !== 'manual_import';
+  const dateText = (!deal.date || deal.date === 'N/A') ? '日期待确认' : deal.date;
+  const extraSourceCount = Math.max(0, (deal.sources || []).length - 1);
   return `
     <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-white dark:bg-slate-800" data-deal-card="${escapeHtml(deal.deal_id)}">
       <div class="flex items-start justify-between gap-2 flex-wrap">
         <div class="flex items-center gap-2 flex-wrap">
-          <span class="text-xs text-slate-400">${escapeHtml(deal.date)}</span>
+          <span class="text-xs text-slate-400">${escapeHtml(dateText)}</span>
           <span class="text-xs px-2 py-0.5 rounded-full font-medium ${typeCls}">${escapeHtml(deal.deal_type)}</span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium ${bdEvidenceCls(deal.evidence_level)}">证据：${escapeHtml(deal.evidence_level)}</span>
+          ${deal.evidence_level === '低' ? '<span class="text-xs px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300">需核验</span>' : ''}
           ${deal.source === 'manual' ? '<span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">来源：手动导入</span>' : ''}
         </div>
         <button data-deep-dive="${escapeHtml(deal.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-medium shrink-0">🔍 深挖分析</button>
       </div>
+      ${deal.date_basis && deal.date_basis !== 'N/A' ? `<div class="text-xs text-slate-400 mt-0.5">日期依据：${escapeHtml(deal.date_basis)}</div>` : ''}
       <div class="mt-2 font-bold">${escapeHtml(deal.pharma)} × ${escapeHtml(deal.partner)}</div>
       <div class="text-sm text-slate-600 dark:text-slate-300 mt-1">标的：${escapeHtml(formatFieldValue(deal.asset))}</div>
       <div class="text-sm text-slate-600 dark:text-slate-300">首付款：${escapeHtml(formatFieldValue(deal.upfront))} ｜ 总额：${escapeHtml(formatFieldValue(deal.total_value))}</div>
-      ${hasSourceUrl ? `<a href="${escapeHtml(deal.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(deal.source_url)}</a>` : ''}
+      <div class="text-sm text-slate-600 dark:text-slate-300">权益范围：${escapeHtml(formatFieldValue(deal.rights_scope))} ｜ 阶段：${escapeHtml(formatFieldValue(deal.stage))}</div>
+      <div class="text-xs text-slate-400 mt-1">来源：${escapeHtml(deal.source_type)}${extraSourceCount > 0 ? ' + ' + extraSourceCount : ''}</div>
+      ${hasSourceUrl
+        ? `<a href="${escapeHtml(deal.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(deal.source_url)}</a>`
+        : (deal.source_url === 'manual_import' ? '<div class="text-xs text-slate-400 mt-1">来源：手动导入，需自行核验原文出处。</div>' : '')}
       ${isExpanded ? dealDetailBlockHtml(deal.deal_id) : ''}
     </div>`;
 }
@@ -1626,8 +1930,16 @@ function renderBdSearchProgress() {
 
 function renderBdToolbar() {
   const el = document.getElementById('bdLastUpdatedText');
-  if (!bdCacheData || !bdCacheData.updatedAt) { el.textContent = '尚未获取过数据'; return; }
-  el.textContent = `上次更新时间：${formatDateTime(bdCacheData.updatedAt)}`;
+  const lookbackEl = document.getElementById('bdLookbackText');
+  if (!bdCacheData || !bdCacheData.updatedAt) {
+    el.textContent = '尚未获取过数据';
+    if (lookbackEl) lookbackEl.textContent = '';
+    return;
+  }
+  const stale = daysSince(bdCacheData.updatedAt) > CONFIG.CACHE_WARN_DAYS;
+  el.innerHTML = `上次更新时间：${formatDateTime(bdCacheData.updatedAt)}` +
+    (stale ? ' <span class="ml-1 px-2 py-0.5 rounded bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-xs">数据已超过 3 天，建议刷新</span>' : '');
+  if (lookbackEl) lookbackEl.textContent = bdCacheData.lookbackDays ? `（上次搜索范围：过去 ${bdCacheData.lookbackDays} 天）` : '';
 }
 
 function populateBdCompanyFilter() {
@@ -1639,17 +1951,35 @@ function populateBdCompanyFilter() {
   if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
 }
 
-// 除 4 个标准类型外，把 normalizeDealType 未能识别、保留了原文的类型也加入下拉菜单，避免这些交易永远筛不到
+// 除标准类型外，把 normalizeDealType 未能识别、保留了原文的类型也加入下拉菜单，避免这些交易永远筛不到
 function populateBdTypeFilter() {
   const select = document.getElementById('bdTypeFilter');
   const currentValue = select.value;
   const extraTypes = [...new Set((bdCacheData?.deals || [])
     .map(d => d.deal_type)
-    .filter(t => t && t !== 'N/A' && !DEAL_TYPE_CANON.includes(t)))];
+    .filter(t => t && t !== 'N/A' && !CONFIG.BD_DEAL_TYPES.includes(t)))];
   const extraOptionsHtml = extraTypes.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
   select.innerHTML = '<option value="all">全部类型</option>' +
-    DEAL_TYPE_CANON.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('') +
+    CONFIG.BD_DEAL_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('') +
     extraOptionsHtml;
+  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
+}
+
+function populateBdEvidenceFilter() {
+  const select = document.getElementById('bdEvidenceFilter');
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML = '<option value="all">全部证据等级</option>' +
+    CONFIG.AI_EVIDENCE_LEVELS.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
+}
+
+function populateBdSourceTypeFilter() {
+  const select = document.getElementById('bdSourceTypeFilter');
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML = '<option value="all">全部来源类型</option>' +
+    CONFIG.BD_SOURCE_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
   if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
 }
 
@@ -2550,6 +2880,8 @@ function init() {
   renderBdToolbar();
   populateBdCompanyFilter();
   populateBdTypeFilter();
+  populateBdEvidenceFilter();
+  populateBdSourceTypeFilter();
   renderBdDealList();
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -2563,9 +2895,13 @@ function init() {
   document.getElementById('bdPasteParseSubmitBtn').addEventListener('click', handlePasteParseSubmit);
   document.getElementById('bdCompanyFilter').addEventListener('change', (e) => { bdFilterCompany = e.target.value; renderBdDealList(); });
   document.getElementById('bdTypeFilter').addEventListener('change', (e) => { bdFilterType = e.target.value; renderBdDealList(); });
+  document.getElementById('bdEvidenceFilter').addEventListener('change', (e) => { bdFilterEvidenceLevel = e.target.value; renderBdDealList(); });
+  document.getElementById('bdSourceTypeFilter').addEventListener('change', (e) => { bdFilterSourceType = e.target.value; renderBdDealList(); });
   document.getElementById('bdDealList').addEventListener('click', (e) => {
+    const reanalyzeBtn = e.target.closest('[data-bd-reanalyze]');
+    if (reanalyzeBtn) { handleDeepDive(reanalyzeBtn.dataset.bdReanalyze, true); return; }
     const deepDiveBtn = e.target.closest('[data-deep-dive]');
-    if (deepDiveBtn) handleDeepDive(deepDiveBtn.dataset.deepDive);
+    if (deepDiveBtn) handleDeepDive(deepDiveBtn.dataset.deepDive, false);
   });
 
   // AI合作板块：页面加载时只读缓存展示，不自动调用 LLM
