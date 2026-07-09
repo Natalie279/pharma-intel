@@ -555,6 +555,18 @@ function daysSince(iso) {
   return (Date.now() - new Date(iso).getTime()) / 86400000;
 }
 
+// 兜底过滤：判断记录的 date 是否明显早于本次请求的搜索范围（容差取 lookbackDays 的3倍与60天中的较大者）。
+// 用于防范搜索服务商的时间范围参数未生效、或模型把旧网页/旧文章的日期当成交易日期返回的情况；
+// date 为 N/A 或 lookbackDays 未知时不做判断（宽松策略优先，不因日期缺失而误杀）
+function isDateOutsideLookback(dateStr, lookbackDays) {
+  if (!dateStr || dateStr === 'N/A' || !lookbackDays) return false;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return false;
+  const toleranceDays = Math.max(lookbackDays * 3, 60);
+  const ageDays = (Date.now() - d.getTime()) / 86400000;
+  return ageDays > toleranceDays;
+}
+
 // 数据基准日：取"今天（发起刷新的这天）的前一天"，作为要求模型对齐估算的参考日期
 function getReferenceDate() {
   const d = new Date();
@@ -1406,9 +1418,24 @@ function normalizeSearchResult(raw, provider) {
   };
 }
 
-async function braveSearchOne(query, apiKey) {
+// 把 lookbackDays 换算成 [起始日期, 今天] 的 YYYY-MM-DD 区间，供各搜索服务商的“时间范围”参数使用
+function computeSearchDateRange(lookbackDays) {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - lookbackDays);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { start: fmt(start), end: fmt(end) };
+}
+
+// lookbackDays 传入时才附加时间范围限制；反查官方来源（backcheck）等场景故意不传，因为官方公告本身可能早于本次主检索窗口
+async function braveSearchOne(query, apiKey, lookbackDays) {
+  let url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`;
+  if (lookbackDays) {
+    const { start, end } = computeSearchDateRange(lookbackDays);
+    url += `&freshness=${start}to${end}`;
+  }
   const json = await fetchSearchApi(
-    `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=5`,
+    url,
     { method: 'GET', headers: { 'Accept': 'application/json', 'X-Subscription-Token': apiKey } },
     'Brave Search'
   );
@@ -1416,20 +1443,31 @@ async function braveSearchOne(query, apiKey) {
   return results.slice(0, 5).map(r => normalizeSearchResult(r, 'brave'));
 }
 
-async function serperSearchOne(query, apiKey) {
+async function serperSearchOne(query, apiKey, lookbackDays) {
+  const body = { q: query };
+  if (lookbackDays) {
+    const { start, end } = computeSearchDateRange(lookbackDays);
+    const toUsDate = (iso) => { const [y, m, d] = iso.split('-'); return `${m}/${d}/${y}`; };
+    body.tbs = `cdr:1,cd_min:${toUsDate(start)},cd_max:${toUsDate(end)}`;
+  }
   const json = await fetchSearchApi(
     'https://google.serper.dev/search',
-    { method: 'POST', headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ q: query }) },
+    { method: 'POST', headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     'Serper.dev'
   );
   const results = json.organic || [];
   return results.slice(0, 5).map(r => normalizeSearchResult(r, 'serper'));
 }
 
-async function tavilySearchOne(query, apiKey) {
+async function tavilySearchOne(query, apiKey, lookbackDays) {
+  const body = { api_key: apiKey, query, max_results: 5 };
+  if (lookbackDays) {
+    // Tavily 的 time_range 只接受粗粒度档位，就近取更紧的一档，避免比用户要求的范围更宽
+    body.time_range = lookbackDays <= 1 ? 'day' : lookbackDays <= 7 ? 'week' : lookbackDays <= 31 ? 'month' : 'year';
+  }
   const json = await fetchSearchApi(
     'https://api.tavily.com/search',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: apiKey, query, max_results: 5 }) },
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
     'Tavily'
   );
   const results = json.results || [];
@@ -1437,10 +1475,11 @@ async function tavilySearchOne(query, apiKey) {
 }
 
 // 按用户选择的搜索服务商分发到对应 adapter，统一返回 normalizeSearchResult() 结构的数组
-async function searchWeb(query, providerId, apiKey) {
-  if (providerId === 'brave') return braveSearchOne(query, apiKey);
-  if (providerId === 'serper') return serperSearchOne(query, apiKey);
-  if (providerId === 'tavily') return tavilySearchOne(query, apiKey);
+// lookbackDays 为空/0 时不加时间限制（backcheck 等场景故意不传）
+async function searchWeb(query, providerId, apiKey, lookbackDays) {
+  if (providerId === 'brave') return braveSearchOne(query, apiKey, lookbackDays);
+  if (providerId === 'serper') return serperSearchOne(query, apiKey, lookbackDays);
+  if (providerId === 'tavily') return tavilySearchOne(query, apiKey, lookbackDays);
   throw new Error(`未知的搜索服务商：${providerId}`);
 }
 
@@ -1464,7 +1503,7 @@ function buildBdSearchQueries(company) {
 // 避免同一链接因命中多条 query 而重复消耗上下文。单家公司全部 query 都失败不阻断整体，仅记录错误
 // bdSearchProgress.current 是跨批次累加的全局进度，由调用方在整个刷新流程开始时初始化好
 // 这一批全部失败时（通常意味着 Key 无效/网络不通）直接抛错，避免带着完全空的上下文继续跑模型
-async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
+async function gatherBdSearchContextForBatch(batch, providerId, apiKey, lookbackDays) {
   const providerLabel = CONFIG.SEARCH_PROVIDER_PRESETS.find(p => p.id === providerId)?.label || providerId;
   const results = [];
   const partialErrors = [];
@@ -1486,7 +1525,7 @@ async function gatherBdSearchContextForBatch(batch, providerId, apiKey) {
     let rawCount = 0;
     for (const query of queries) {
       try {
-        const r = await searchWeb(query, providerId, apiKey);
+        const r = await searchWeb(query, providerId, apiKey, lookbackDays);
         rawCount += r.length;
         for (const item of r) {
           if (!item.url || seenUrls.has(item.url)) continue;
@@ -1734,7 +1773,7 @@ async function fetchBdDealsForBatch(batch, s, lookbackDays) {
   const grounded = !!s.searchApiKey;
   let context = null;
   if (grounded) {
-    context = await gatherBdSearchContextForBatch(batch, s.searchProvider, s.searchApiKey);
+    context = await gatherBdSearchContextForBatch(batch, s.searchProvider, s.searchApiKey, lookbackDays);
     messages = buildBdListMessagesGrounded(context.results, lookbackDays);
     partialErrors = context.partialErrors;
     // 已经用真实搜索结果 grounded 过了，模型没必要再自己联网搜一遍——两者叠加只会显著拖慢速度、更容易超时
@@ -1783,11 +1822,13 @@ async function fetchBdDealsForBatch(batch, s, lookbackDays) {
     const companyDiag = bdSearchDiagnostics ? ensureCompanyDiag(bdSearchDiagnostics, companyName) : null;
     if (companyDiag) { companyDiag.extracted_records_count += 1; bdSearchDiagnostics.totals.extractedRecords += 1; }
     const validation = validateBdDealRecord(record);
-    if (!validation.valid) {
+    const dateOutOfRange = isDateOutsideLookback(record.date, lookbackDays);
+    if (!validation.valid || dateOutOfRange) {
       if (companyDiag) {
         companyDiag.filtered_count += 1;
         bdSearchDiagnostics.totals.filtered += 1;
-        companyDiag.notes.push(`过滤：${record.pharma || '未知'} × ${record.partner || '未知'}：${validation.reasons.join('、')}`);
+        const reasons = dateOutOfRange ? [...validation.reasons, `日期(${record.date})明显早于本次搜索范围（过去${lookbackDays}天），疑似检索到旧内容`] : validation.reasons;
+        companyDiag.notes.push(`过滤：${record.pharma || '未知'} × ${record.partner || '未知'}：${reasons.join('、')}`);
       }
       continue;
     }
@@ -2540,7 +2581,7 @@ function buildAiCollabSearchQueries(company) {
 }
 
 // 对一家公司跑完全部 query，按 URL 去重后再喂给 LLM，避免同一链接重复消耗上下文
-async function gatherAiSearchContextForCompany(company, providerId, apiKey) {
+async function gatherAiSearchContextForCompany(company, providerId, apiKey, lookbackDays) {
   const queries = buildAiCollabSearchQueries(company);
   const companyDiag = aiSearchDiagnostics ? ensureCompanyDiag(aiSearchDiagnostics, company.name) : null;
   if (companyDiag) {
@@ -2554,7 +2595,7 @@ async function gatherAiSearchContextForCompany(company, providerId, apiKey) {
   let rawCount = 0;
   for (const query of queries) {
     try {
-      const results = await searchWeb(query, providerId, apiKey);
+      const results = await searchWeb(query, providerId, apiKey, lookbackDays);
       rawCount += results.length;
       for (const r of results) {
         if (!r.url || seenUrls.has(r.url)) continue;
@@ -2796,7 +2837,7 @@ async function fetchAiCollabsForCompany(company, s, lookbackDays) {
     aiSearchProgress = { ...aiSearchProgress, phase: 'searching', companyName: company.name };
     renderAiSearchProgress();
   }
-  const context = await gatherAiSearchContextForCompany(company, s.searchProvider, s.searchApiKey);
+  const context = await gatherAiSearchContextForCompany(company, s.searchProvider, s.searchApiKey, lookbackDays);
   const messages = buildAiCollabListMessagesGrounded(company, context, lookbackDays);
   const llmSettings = { ...s, webSearchEnabled: false };
 
@@ -2828,11 +2869,13 @@ async function fetchAiCollabsForCompany(company, s, lookbackDays) {
     const record = normalizeAiCollabRecord(raw, 'auto');
     if (companyDiag) { companyDiag.extracted_records_count += 1; aiSearchDiagnostics.totals.extractedRecords += 1; }
     const validation = validateAiCollabRecord(record);
-    if (!validation.valid) {
+    const dateOutOfRange = isDateOutsideLookback(record.date, lookbackDays);
+    if (!validation.valid || dateOutOfRange) {
       if (companyDiag) {
         companyDiag.filtered_count += 1;
         aiSearchDiagnostics.totals.filtered += 1;
-        companyDiag.notes.push(`过滤：${record.pharma || '未知'} × ${record.ai_partner || '未知'}：${validation.reasons.join('、')}`);
+        const reasons = dateOutOfRange ? [...validation.reasons, `日期(${record.date})明显早于本次搜索范围（过去${lookbackDays}天），疑似检索到旧内容`] : validation.reasons;
+        companyDiag.notes.push(`过滤：${record.pharma || '未知'} × ${record.ai_partner || '未知'}：${reasons.join('、')}`);
       }
       continue;
     }
