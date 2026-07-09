@@ -105,6 +105,7 @@
         <option value="90">过去 90 天</option>
       </select>
       <button id="bdPasteParseBtn" class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium">📋 粘贴原文解析</button>
+      <button id="bdBatchBackcheckBtn" disabled class="px-4 py-2 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔎 批量反查待核验线索</button>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
       <select id="bdCompanyFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
@@ -167,6 +168,7 @@
         <option value="90">过去 90 天</option>
       </select>
       <button id="aiPasteParseBtn" class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium">📋 粘贴原文解析</button>
+      <button id="aiBatchBackcheckBtn" disabled class="px-4 py-2 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔎 批量反查待核验线索</button>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
       <select id="aiCompanyFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
@@ -608,6 +610,8 @@ let bdPauseWaiters = [];        // 暂停期间挂起的 resolve 回调，点击
 let bdSearchDiagnostics = null; // 本次刷新的检索诊断（见 createEmptySearchDiagnostics）
 let bdBackcheckLoadingId = null; // 正在反查官方来源的交易 id
 let bdAbortRequested = false;   // 由 ensureBdIdle() 设置，用于安全中止一个暂停中/进行中的旧刷新循环
+let bdBatchBackcheckLoading = false; // 是否正在批量反查
+let bdBatchBackcheckProgress = null; // { current, total }
 
 // ---- AI合作板块状态 ----
 let aiCollabCacheData = null;   // { updatedAt, lookbackDays, collaborations: [...] }
@@ -627,6 +631,8 @@ let aiPauseWaiters = [];
 let aiSearchDiagnostics = null; // 本次刷新的检索诊断（见 createEmptySearchDiagnostics）
 let aiBackcheckLoadingId = null; // 正在反查官方来源的合作 id
 let aiAbortRequested = false;   // 由 ensureAiIdle() 设置，用于安全中止一个暂停中/进行中的旧刷新循环
+let aiBatchBackcheckLoading = false; // 是否正在批量反查
+let aiBatchBackcheckProgress = null; // { current, total }
 
 // ---- 飞书推送板块状态 ----
 let pushHistory = null;         // { pushes: [...], pushed_item_ids: [...] }，见 loadPushHistory()
@@ -1145,13 +1151,17 @@ function updateRefreshButtonState(loading) {
 // 暂停中的板块不算"活跃"——此时没有请求在飞行，允许操作其他板块，也允许对暂停中的板块本身重新触发
 // （重新触发会先经 ensureBdIdle()/ensureAiIdle() 安全中止旧的暂停循环，见 handleBdClearAndRefresh 等）
 function syncRefreshButtonsDisabled() {
-  const bdBusy = bdIsLoading && !bdIsPaused;
-  const aiBusy = aiIsLoading && !aiIsPaused;
+  const bdBusy = (bdIsLoading && !bdIsPaused) || bdBatchBackcheckLoading;
+  const aiBusy = (aiIsLoading && !aiIsPaused) || aiBatchBackcheckLoading;
   document.getElementById('refreshBtn').disabled = isLoading || bdBusy || aiBusy;
   document.getElementById('bdRefreshBtn').disabled = isLoading || aiBusy;
   document.getElementById('aiRefreshBtn').disabled = isLoading || bdBusy;
   document.getElementById('bdClearRefreshBtn').disabled = isLoading || aiBusy;
   document.getElementById('aiClearRefreshBtn').disabled = isLoading || bdBusy;
+  const bdBatchBtn = document.getElementById('bdBatchBackcheckBtn');
+  if (bdBatchBtn) bdBatchBtn.disabled = bdBatchBackcheckLoading || bdIsLoading || isLoading || aiBusy || !getBdBackcheckTargets().length;
+  const aiBatchBtn = document.getElementById('aiBatchBackcheckBtn');
+  if (aiBatchBtn) aiBatchBtn.disabled = aiBatchBackcheckLoading || aiIsLoading || isLoading || bdBusy || !getAiBackcheckTargets().length;
 }
 
 // ==================== 渲染 ====================
@@ -2338,6 +2348,48 @@ async function handleBdBackcheck(dealId) {
   renderBdDiagnosticsPanel();
 }
 
+// 当前仍待核验（T2/Unknown）的交易列表，供批量反查使用，也用于按钮上显示计数
+function getBdBackcheckTargets() {
+  return (bdCacheData?.deals || []).filter(d => d.source_tier === 'T2' || d.source_tier === 'Unknown');
+}
+
+// 批量反查：逐条 await 复用 handleBdBackcheck()，不并发。这样能安全复用它已有的错误处理、
+// backcheckStats 诊断统计和缓存写入逻辑，处理中的卡片也会自然显示"⏳ 反查中"
+async function handleBdBatchBackcheck() {
+  if (bdBatchBackcheckLoading || bdBackcheckLoadingId || bdIsLoading || isLoading || (aiIsLoading && !aiIsPaused)) return;
+  if (!settings.searchApiKey) {
+    bdErrorMessages.push('反查官方来源需要先在设置面板配置搜索服务商 API Key');
+    renderBdErrorBanner();
+    return;
+  }
+  const targets = getBdBackcheckTargets();
+  if (!targets.length) return;
+  bdBatchBackcheckLoading = true;
+  bdBatchBackcheckProgress = { current: 0, total: targets.length };
+  updateBdBatchBackcheckButtonState();
+  for (const deal of targets) {
+    const latest = (bdCacheData?.deals || []).find(d => d.deal_id === deal.deal_id);
+    if (latest && (latest.source_tier === 'T2' || latest.source_tier === 'Unknown')) {
+      await handleBdBackcheck(deal.deal_id);
+    }
+    bdBatchBackcheckProgress.current += 1;
+    updateBdBatchBackcheckButtonState();
+  }
+  bdBatchBackcheckLoading = false;
+  bdBatchBackcheckProgress = null;
+  updateBdBatchBackcheckButtonState();
+}
+
+function updateBdBatchBackcheckButtonState() {
+  const btn = document.getElementById('bdBatchBackcheckBtn');
+  if (!btn) return;
+  const targets = getBdBackcheckTargets();
+  btn.textContent = bdBatchBackcheckLoading
+    ? `⏳ 批量反查中（${bdBatchBackcheckProgress.current}/${bdBatchBackcheckProgress.total}）`
+    : `🔎 批量反查待核验线索${targets.length ? '（' + targets.length + ' 条）' : ''}`;
+  syncRefreshButtonsDisabled();
+}
+
 // ==================== BD & 并购：粘贴原文解析 ====================
 
 function buildPasteParseMessages(rawText) {
@@ -2661,6 +2713,7 @@ function renderBdToolbar() {
   if (!bdCacheData || !bdCacheData.updatedAt) {
     el.textContent = '尚未获取过数据';
     if (lookbackEl) lookbackEl.textContent = '';
+    updateBdBatchBackcheckButtonState();
     return;
   }
   const stale = daysSince(bdCacheData.updatedAt) > CONFIG.CACHE_WARN_DAYS;
@@ -2670,6 +2723,7 @@ function renderBdToolbar() {
     const modeLabel = bdCacheData.lookbackMode && bdCacheData.lookbackMode !== 'auto' ? '手动' : '自动';
     lookbackEl.textContent = bdCacheData.lookbackDays ? `（本次搜索范围：过去 ${bdCacheData.lookbackDays} 天，${modeLabel}）` : '';
   }
+  updateBdBatchBackcheckButtonState();
 }
 
 function populateBdCompanyFilter() {
@@ -3357,6 +3411,47 @@ async function handleAiBackcheck(collabId) {
   renderAiDiagnosticsPanel();
 }
 
+// 当前仍待核验（T2/Unknown）的合作列表，供批量反查使用，也用于按钮上显示计数
+function getAiBackcheckTargets() {
+  return (aiCollabCacheData?.collaborations || []).filter(c => c.source_tier === 'T2' || c.source_tier === 'Unknown');
+}
+
+// 批量反查：逐条 await 复用 handleAiBackcheck()，不并发，逻辑同 handleBdBatchBackcheck
+async function handleAiBatchBackcheck() {
+  if (aiBatchBackcheckLoading || aiBackcheckLoadingId || aiIsLoading || isLoading || (bdIsLoading && !bdIsPaused)) return;
+  if (!settings.searchApiKey) {
+    aiErrorMessages.push('反查官方来源需要先在设置面板配置搜索服务商 API Key');
+    renderAiErrorBanner();
+    return;
+  }
+  const targets = getAiBackcheckTargets();
+  if (!targets.length) return;
+  aiBatchBackcheckLoading = true;
+  aiBatchBackcheckProgress = { current: 0, total: targets.length };
+  updateAiBatchBackcheckButtonState();
+  for (const collab of targets) {
+    const latest = (aiCollabCacheData?.collaborations || []).find(c => c.deal_id === collab.deal_id);
+    if (latest && (latest.source_tier === 'T2' || latest.source_tier === 'Unknown')) {
+      await handleAiBackcheck(collab.deal_id);
+    }
+    aiBatchBackcheckProgress.current += 1;
+    updateAiBatchBackcheckButtonState();
+  }
+  aiBatchBackcheckLoading = false;
+  aiBatchBackcheckProgress = null;
+  updateAiBatchBackcheckButtonState();
+}
+
+function updateAiBatchBackcheckButtonState() {
+  const btn = document.getElementById('aiBatchBackcheckBtn');
+  if (!btn) return;
+  const targets = getAiBackcheckTargets();
+  btn.textContent = aiBatchBackcheckLoading
+    ? `⏳ 批量反查中（${aiBatchBackcheckProgress.current}/${aiBatchBackcheckProgress.total}）`
+    : `🔎 批量反查待核验线索${targets.length ? '（' + targets.length + ' 条）' : ''}`;
+  syncRefreshButtonsDisabled();
+}
+
 // ==================== AI合作：粘贴原文解析 ====================
 
 function buildAiCollabPasteMessages(rawText) {
@@ -3614,6 +3709,7 @@ function renderAiToolbar() {
   if (!aiCollabCacheData || !aiCollabCacheData.updatedAt) {
     el.textContent = '尚未获取过数据';
     lookbackEl.textContent = '';
+    updateAiBatchBackcheckButtonState();
     return;
   }
   const stale = daysSince(aiCollabCacheData.updatedAt) > CONFIG.CACHE_WARN_DAYS;
@@ -3621,6 +3717,7 @@ function renderAiToolbar() {
     (stale ? ' <span class="ml-1 px-2 py-0.5 rounded bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-xs">数据已超过 3 天，建议刷新</span>' : '');
   const aiModeLabel = aiCollabCacheData.lookbackMode && aiCollabCacheData.lookbackMode !== 'auto' ? '手动' : '自动';
   lookbackEl.textContent = aiCollabCacheData.lookbackDays ? `（本次搜索范围：过去 ${aiCollabCacheData.lookbackDays} 天，${aiModeLabel}）` : '';
+  updateAiBatchBackcheckButtonState();
 }
 
 function renderAiSearchProgress() {
@@ -4458,6 +4555,7 @@ function init() {
   document.getElementById('bdClearRefreshBtn').addEventListener('click', handleBdClearAndRefresh);
   document.getElementById('bdPauseResumeBtn').addEventListener('click', togglePauseBdSearch);
   document.getElementById('bdPasteParseBtn').addEventListener('click', openBdPasteModal);
+  document.getElementById('bdBatchBackcheckBtn').addEventListener('click', handleBdBatchBackcheck);
   document.getElementById('closeBdPasteModalBtn').addEventListener('click', closeBdPasteModal);
   document.getElementById('bdPasteParseSubmitBtn').addEventListener('click', handlePasteParseSubmit);
   document.getElementById('bdCompanyFilter').addEventListener('change', (e) => { bdFilterCompany = e.target.value; renderBdDealList(); });
@@ -4486,6 +4584,7 @@ function init() {
   document.getElementById('aiClearRefreshBtn').addEventListener('click', handleAiClearAndRefresh);
   document.getElementById('aiPauseResumeBtn').addEventListener('click', togglePauseAiSearch);
   document.getElementById('aiPasteParseBtn').addEventListener('click', openAiPasteModal);
+  document.getElementById('aiBatchBackcheckBtn').addEventListener('click', handleAiBatchBackcheck);
   document.getElementById('closeAiPasteModalBtn').addEventListener('click', closeAiPasteModal);
   document.getElementById('aiPasteParseSubmitBtn').addEventListener('click', handleAiPasteParseSubmit);
   document.getElementById('aiCompanyFilter').addEventListener('change', (e) => { aiFilterCompany = e.target.value; renderAiCollabCards(); });
