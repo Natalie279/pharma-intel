@@ -33,7 +33,7 @@
   <div class="max-w-7xl mx-auto px-4 flex gap-1 border-t border-slate-100 dark:border-slate-700/50">
     <button data-tab="market" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400">市值与财务</button>
     <button data-tab="bd" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 dark:text-slate-400">BD&amp;并购</button>
-    <button class="px-4 py-2 text-sm font-medium text-slate-400 cursor-not-allowed" title="即将推出" disabled>AI合作（即将推出）</button>
+    <button data-tab="ai" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 dark:text-slate-400">AI合作</button>
   </div>
 </header>
 
@@ -117,6 +117,52 @@
   </div>
 
   <div id="bdDealList" class="space-y-3"></div>
+</div>
+
+<!-- ---------- Tab 三：AI合作 ---------- -->
+<div id="tabPanel-ai" class="hidden">
+
+  <!-- 免责声明（AI合作特有：披露不如BD交易/财报稳定） -->
+  <div class="mb-4 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-sm">
+    ⚠️ AI 合作信息主要来自公司官网、媒体报道、公司PR和公开网页，披露不如BD交易或财报稳定。以下结果由AI辅助搜索与结构化提取生成，可能存在遗漏、误判或来源不完整。请点击来源核验后再用于正式引用。
+  </div>
+
+  <div id="aiErrorBanner" class="mb-4 space-y-2"></div>
+
+  <div class="mb-4 flex flex-wrap items-center gap-3 justify-between">
+    <div class="flex items-center gap-3 flex-wrap">
+      <span id="aiLastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
+      <span id="aiLookbackText" class="text-xs text-slate-400"></span>
+      <button id="aiRefreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新 AI 合作</button>
+      <button id="aiPasteParseBtn" class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm font-medium">📋 粘贴原文解析</button>
+    </div>
+    <div class="flex items-center gap-2 flex-wrap">
+      <select id="aiCompanyFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部公司</option>
+      </select>
+      <select id="aiDirectionFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部方向</option>
+      </select>
+      <select id="aiEvidenceFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部证据等级</option>
+      </select>
+      <select id="aiSourceTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部来源类型</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="aiSearchProgress" class="hidden mb-4">
+    <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
+      <span id="aiSearchProgressText">搜索中…</span>
+      <button id="aiPauseResumeBtn" class="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">⏸ 暂停</button>
+    </div>
+    <div class="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+      <div id="aiSearchProgressBar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 0%"></div>
+    </div>
+  </div>
+
+  <div id="aiCollabGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
 </div>
 
 </main>
@@ -234,30 +280,46 @@
   </div>
 </div>
 
+<!-- ==================== AI合作 粘贴原文解析弹窗 ==================== -->
+<div id="aiPasteModalOverlay" class="fixed inset-0 bg-black/40 z-50 hidden flex items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-xl p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold">📋 粘贴原文解析</h3>
+      <button id="closeAiPasteModalBtn" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">✕</button>
+    </div>
+    <p class="text-xs text-slate-500 dark:text-slate-400">粘贴微信公众号文章、英文媒体报道、公司新闻稿全文等，AI 会尝试提取其中的 Pharma × AI 合作信息（不联网搜索，仅基于你粘贴的原文）。</p>
+    <textarea id="aiPasteInput" rows="10" placeholder="粘贴文章全文……" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm"></textarea>
+    <button id="aiPasteParseSubmitBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">解析</button>
+    <div id="aiPasteStatus" class="text-sm h-5"></div>
+  </div>
+</div>
+
 <script>
 // ==================== 配置区：集中管理公司列表 / 字段 / 批次等 ====================
 const CONFIG = {
+  // officialDomains 留空：国内几家公司的官网域名没有十足把握，写错了 site: 查询会静默返回空结果不易发现，
+  // 宁可不填也不猜错；有需要可自行补充，AI合作板块的搜索逻辑对缺失该字段有兜底
   COMPANIES: [
-    { name: 'Roche', group: 'mnc', aliases: ['罗氏'] },
-    { name: 'Pfizer', group: 'mnc', aliases: ['辉瑞'] },
-    { name: 'Novartis', group: 'mnc', aliases: ['诺华'] },
-    { name: 'AstraZeneca', group: 'mnc', aliases: ['阿斯利康'] },
-    { name: 'MSD', group: 'mnc', aliases: ['Merck', 'Merck & Co', 'Merck & Co.', 'Merck Sharp & Dohme', '默沙东'] },
-    { name: 'BMS', group: 'mnc', aliases: ['Bristol-Myers Squibb', 'Bristol Myers Squibb', '百时美施贵宝'] },
-    { name: 'J&J', group: 'mnc', aliases: ['Johnson & Johnson', 'Johnson and Johnson', '强生'] },
-    { name: 'Lilly', group: 'mnc', aliases: ['Eli Lilly', 'Eli Lilly and Company', '礼来'] },
-    { name: 'Sanofi', group: 'mnc', aliases: ['赛诺菲'] },
-    { name: 'AbbVie', group: 'mnc', aliases: ['艾伯维'] },
-    { name: 'GSK', group: 'mnc', aliases: ['GlaxoSmithKline', '葛兰素史克'] },
-    { name: 'Takeda', group: 'mnc', aliases: ['Takeda Pharmaceutical', '武田'] },
-    { name: '恒瑞医药', group: 'cn', aliases: ['Hengrui', 'Hengrui Medicine', 'Hengrui Pharmaceuticals', 'Jiangsu Hengrui Medicine', 'Jiangsu Hengrui Pharmaceutical'] },
-    { name: '百济神州', group: 'cn', aliases: ['BeiGene', 'BeiGene Ltd'] },
-    { name: '信达生物', group: 'cn', aliases: ['Innovent Biologics', 'Innovent'] },
-    { name: '君实生物', group: 'cn', aliases: ['Junshi Biosciences', 'Junshi Bio', 'TopAlliance Biosciences'] },
-    { name: '复星医药', group: 'cn', aliases: ['Fosun Pharma', 'Fosun Pharmaceutical', 'Shanghai Fosun Pharmaceutical'] },
-    { name: '先声药业', group: 'cn', aliases: ['Simcere Pharmaceutical', 'Simcere'] },
-    { name: '石药集团', group: 'cn', aliases: ['CSPC Pharmaceutical Group', 'CSPC Pharmaceutical', 'CSPC'] },
-    { name: '中国生物制药', group: 'cn', aliases: ['Sino Biopharmaceutical', 'Sino Biopharm'] },
+    { name: 'Roche', group: 'mnc', aliases: ['罗氏'], officialDomains: [] },
+    { name: 'Pfizer', group: 'mnc', aliases: ['辉瑞'], officialDomains: [] },
+    { name: 'Novartis', group: 'mnc', aliases: ['诺华'], officialDomains: [] },
+    { name: 'AstraZeneca', group: 'mnc', aliases: ['阿斯利康'], officialDomains: [] },
+    { name: 'MSD', group: 'mnc', aliases: ['Merck', 'Merck & Co', 'Merck & Co.', 'Merck Sharp & Dohme', '默沙东'], officialDomains: [] },
+    { name: 'BMS', group: 'mnc', aliases: ['Bristol-Myers Squibb', 'Bristol Myers Squibb', '百时美施贵宝'], officialDomains: [] },
+    { name: 'J&J', group: 'mnc', aliases: ['Johnson & Johnson', 'Johnson and Johnson', '强生'], officialDomains: [] },
+    { name: 'Lilly', group: 'mnc', aliases: ['Eli Lilly', 'Eli Lilly and Company', '礼来'], officialDomains: [] },
+    { name: 'Sanofi', group: 'mnc', aliases: ['赛诺菲'], officialDomains: [] },
+    { name: 'AbbVie', group: 'mnc', aliases: ['艾伯维'], officialDomains: [] },
+    { name: 'GSK', group: 'mnc', aliases: ['GlaxoSmithKline', '葛兰素史克'], officialDomains: [] },
+    { name: 'Takeda', group: 'mnc', aliases: ['Takeda Pharmaceutical', '武田'], officialDomains: [] },
+    { name: '恒瑞医药', group: 'cn', aliases: ['Hengrui', 'Hengrui Medicine', 'Hengrui Pharmaceuticals', 'Jiangsu Hengrui Medicine', 'Jiangsu Hengrui Pharmaceutical'], officialDomains: [] },
+    { name: '百济神州', group: 'cn', aliases: ['BeiGene', 'BeiGene Ltd'], officialDomains: [] },
+    { name: '信达生物', group: 'cn', aliases: ['Innovent Biologics', 'Innovent'], officialDomains: [] },
+    { name: '君实生物', group: 'cn', aliases: ['Junshi Biosciences', 'Junshi Bio', 'TopAlliance Biosciences'], officialDomains: [] },
+    { name: '复星医药', group: 'cn', aliases: ['Fosun Pharma', 'Fosun Pharmaceutical', 'Shanghai Fosun Pharmaceutical'], officialDomains: [] },
+    { name: '先声药业', group: 'cn', aliases: ['Simcere Pharmaceutical', 'Simcere'], officialDomains: [] },
+    { name: '石药集团', group: 'cn', aliases: ['CSPC Pharmaceutical Group', 'CSPC Pharmaceutical', 'CSPC'], officialDomains: [] },
+    { name: '中国生物制药', group: 'cn', aliases: ['Sino Biopharmaceutical', 'Sino Biopharm'], officialDomains: [] },
   ],
   BATCH_SIZE: 4,
   REQUEST_TIMEOUT_MS: 90000,
@@ -271,6 +333,24 @@ const CONFIG = {
   BD_LOOKBACK_DAYS: 90,
   // BD 板块每次只处理 1 家公司再调用大模型，搜完一家就能立刻在列表里看到，且单次请求足够小、基本不会超时
   BD_BATCH_SIZE: 1,
+  // AI合作板块配置
+  AI_COLLAB_CACHE_KEY: 'pharma_intel_ai_collabs',
+  AI_COLLAB_DETAIL_CACHE_KEY: 'pharma_intel_ai_collab_details',
+  AI_LOOKBACK_DEFAULT_DAYS: 90,
+  AI_LOOKBACK_MAX_DAYS: 90,
+  AI_LOOKBACK_MIN_DAYS: 7,
+  AI_LOOKBACK_BUFFER_DAYS: 3,
+  AI_BATCH_SIZE: 1,
+  // 合作方向枚举（供筛选/prompt schema 使用）
+  AI_DIRECTIONS: ['药物发现', '临床试验AI', '医学影像', '真实世界数据', '生成式AI', '数字疗法', '数据/平台基础设施', '商业化/患者服务', '其他'],
+  // 方向"具体性"优先级（从具体到笼统），用于合并时同一合作被打了不同方向标签的冲突处理
+  AI_DIRECTION_SPECIFICITY: ['医学影像', '临床试验AI', '药物发现', '真实世界数据', '生成式AI', '数字疗法', '商业化/患者服务', '数据/平台基础设施', '其他'],
+  AI_EVIDENCE_LEVELS: ['高', '中', '低'],
+  AI_SOURCE_TYPES: ['公司公告', '媒体报道', '论文/会议', '合作方官网', '手动导入'],
+  // 归一化 ai_partner 名称时去除的常见公司后缀
+  AI_PARTNER_SUFFIXES: ['inc', 'ltd', 'limited', 'co', 'corporation', 'corp', 'llc'],
+  // 判定为同一合作的日期容差窗口（天）
+  AI_DEDUPE_DATE_WINDOW_DAYS: 14,
   CACHE_WARN_DAYS: 3,
   DEFAULT_BASE_URL: 'https://api.openai.com/v1',
   DEFAULT_MODEL: 'gpt-4o',
@@ -324,6 +404,21 @@ let bdLoadingDetailId = null;   // 正在请求深挖分析的交易 id
 let bdSearchProgress = null;    // { current, total, phase: 'searching' | 'analyzing', companyName }，用于展示搜索进度条
 let bdIsPaused = false;         // 是否已暂停（在两家公司之间生效，不会打断正在进行中的请求）
 let bdPauseWaiters = [];        // 暂停期间挂起的 resolve 回调，点击继续时统一唤醒
+
+// ---- AI合作板块状态 ----
+let aiCollabCacheData = null;   // { updatedAt, lookbackDays, collaborations: [...] }
+let aiCollabDetailCache = {};   // { [dedupeKey]: { updatedAt, detail } }
+let aiErrorMessages = [];
+let aiFilterCompany = 'all';
+let aiFilterDirection = 'all';
+let aiFilterEvidenceLevel = 'all';
+let aiFilterSourceType = 'all';
+let aiIsLoading = false;
+let expandedAiCollabId = null;  // 当前展开深挖详情的合作 dedupeKey
+let aiLoadingDetailId = null;   // 正在请求深挖分析的合作 dedupeKey
+let aiSearchProgress = null;    // { current, total, phase: 'searching' | 'analyzing', companyName }
+let aiIsPaused = false;
+let aiPauseWaiters = [];
 
 // ==================== 工具函数 ====================
 
@@ -731,7 +826,7 @@ async function processCompanyBatch(batch) {
 }
 
 async function refreshAllData() {
-  if (isLoading || bdIsLoading) return;
+  if (isLoading || bdIsLoading || aiIsLoading) return;
   isLoading = true;
   errorMessages = [];
   renderErrorBanner();
@@ -777,11 +872,12 @@ function updateRefreshButtonState(loading) {
   syncRefreshButtonsDisabled();
 }
 
-// 两个板块的刷新互斥：任一板块正在加载时，两个刷新按钮都禁用，避免并发抢占同一个 API 配额
+// 三个板块的刷新互斥：任一板块正在加载时，三个刷新按钮都禁用，避免并发抢占同一个 API 配额
 function syncRefreshButtonsDisabled() {
-  const busy = isLoading || bdIsLoading;
+  const busy = isLoading || bdIsLoading || aiIsLoading;
   document.getElementById('refreshBtn').disabled = busy;
   document.getElementById('bdRefreshBtn').disabled = busy;
+  document.getElementById('aiRefreshBtn').disabled = busy;
 }
 
 // ==================== 渲染 ====================
@@ -1222,7 +1318,7 @@ function waitIfBdPaused() {
 }
 
 async function refreshBdDeals() {
-  if (bdIsLoading || isLoading) return;
+  if (bdIsLoading || isLoading || aiIsLoading) return;
   bdIsLoading = true;
   bdIsPaused = false;
   bdPauseWaiters = [];
@@ -1557,11 +1653,723 @@ function populateBdTypeFilter() {
   if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
 }
 
+// ==================== AI合作：本地存储读写 ====================
+
+function loadAiCollabCache() {
+  const raw = localStorage.getItem(CONFIG.AI_COLLAB_CACHE_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+function saveAiCollabCacheToStorage(data) {
+  localStorage.setItem(CONFIG.AI_COLLAB_CACHE_KEY, JSON.stringify(data));
+}
+function loadAiCollabDetailCache() {
+  const raw = localStorage.getItem(CONFIG.AI_COLLAB_DETAIL_CACHE_KEY);
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch (e) { return {}; }
+}
+function saveAiCollabDetailCacheToStorage(cache) {
+  localStorage.setItem(CONFIG.AI_COLLAB_DETAIL_CACHE_KEY, JSON.stringify(cache));
+}
+
+// ==================== AI合作：自适应回溯期 + 搜索 ====================
+
+// 按文档给定实现：无历史缓存用90天兜底；否则用"距上次刷新的天数+缓冲天数"，clamp在[7,90]之间
+function getAiLookbackDays(cacheData) {
+  if (!cacheData || !cacheData.updatedAt) return CONFIG.AI_LOOKBACK_DEFAULT_DAYS;
+  const daysSinceLastRefresh = Math.ceil(daysSince(cacheData.updatedAt));
+  return Math.min(
+    CONFIG.AI_LOOKBACK_MAX_DAYS,
+    Math.max(CONFIG.AI_LOOKBACK_MIN_DAYS, daysSinceLastRefresh + CONFIG.AI_LOOKBACK_BUFFER_DAYS)
+  );
+}
+
+// 精简版增强搜索：英文通用 + 中文通用 + site:官网域名（如已配置），不跑文档里给出的全部10条query示例，
+// 控制单次刷新的总请求量（20家公司 × 10条 = 200次搜索会很快耗尽免费额度）
+function buildAiCollabSearchQueries(company) {
+  const queries = [`${company.name} AI partnership drug discovery collaboration`];
+  const cnName = (company.aliases || []).find(a => /[一-龥]/.test(a)) || company.name;
+  queries.push(`${cnName} 人工智能 合作 药物发现`);
+  if (company.officialDomains && company.officialDomains.length) {
+    queries.push(`site:${company.officialDomains[0]} AI OR artificial intelligence collaboration`);
+  }
+  return queries;
+}
+
+// 对一家公司跑完全部 query，按 URL 去重后再喂给 LLM，避免同一链接重复消耗上下文
+async function gatherAiSearchContextForCompany(company, providerId, apiKey) {
+  const queries = buildAiCollabSearchQueries(company);
+  const seenUrls = new Set();
+  const dedupedResults = [];
+  const partialErrors = [];
+  for (const query of queries) {
+    try {
+      const results = await searchWeb(query, providerId, apiKey);
+      for (const r of results) {
+        if (!r.url || seenUrls.has(r.url)) continue;
+        seenUrls.add(r.url);
+        dedupedResults.push(r);
+      }
+    } catch (err) {
+      partialErrors.push(`${err.message}`);
+    }
+    await sleep(1100); // 避免触发搜索服务商免费额度的每秒请求限制
+  }
+  if (partialErrors.length === queries.length) {
+    const e = new Error(`搜索请求全部失败，请检查 API Key 或网络（示例：${partialErrors[0]}）`);
+    e.type = 'search_failed';
+    throw e;
+  }
+  return { company: company.name, results: dedupedResults, partialErrors };
+}
+
+// ==================== AI合作：去重与合并 ====================
+
+// 归一化 AI 合作方名称：小写、去标点、去常见公司后缀、去空格
+function normalizeAiPartnerName(name) {
+  if (!name) return '';
+  let n = String(name).toLowerCase().trim();
+  n = n.replace(/[.,、，。]/g, '');
+  const suffixPattern = new RegExp(`\\b(${CONFIG.AI_PARTNER_SUFFIXES.join('|')})\\b`, 'g');
+  n = n.replace(suffixPattern, '');
+  n = n.replace(/\s+/g, '');
+  return n;
+}
+
+// 判断两条记录是否为同一合作：pharma 精确一致 + ai_partner 归一化后相同/互相包含（简化版"高度相似"，
+// 不引入完整的字符串相似度算法）+ 日期在14天窗口内；若任一方日期未知，则仅凭 pharma+ai_partner 匹配即视为同一合作
+function isSameAiCollab(a, b) {
+  if (a.pharma !== b.pharma) return false;
+  const normA = normalizeAiPartnerName(a.ai_partner);
+  const normB = normalizeAiPartnerName(b.ai_partner);
+  if (!normA || !normB) return false;
+  const partnerMatch = normA === normB || normA.includes(normB) || normB.includes(normA);
+  if (!partnerMatch) return false;
+  const dateA = a.date && a.date !== 'N/A' ? new Date(a.date).getTime() : null;
+  const dateB = b.date && b.date !== 'N/A' ? new Date(b.date).getTime() : null;
+  if (dateA && dateB) {
+    return Math.abs(dateA - dateB) / 86400000 <= CONFIG.AI_DEDUPE_DATE_WINDOW_DAYS;
+  }
+  return true;
+}
+
+function findMatchingAiCollabIndex(list, candidate) {
+  return list.findIndex(item => isSameAiCollab(item, candidate));
+}
+
+// source_type 的可信度优先级（用于挑选主来源、合并日期时判断谁更可信）；简化自文档里更细的分级，
+// 因为 schema 里的 source_type 枚举只有这 5 类
+const AI_SOURCE_TYPE_PRIORITY = ['公司公告', '合作方官网', '论文/会议', '媒体报道', '手动导入'];
+function aiSourceTypePriority(type) {
+  const idx = AI_SOURCE_TYPE_PRIORITY.indexOf(type);
+  return idx === -1 ? AI_SOURCE_TYPE_PRIORITY.length : idx;
+}
+
+function pickMoreSpecificAiDirection(a, b) {
+  const order = CONFIG.AI_DIRECTION_SPECIFICITY;
+  const ia = order.indexOf(a), ib = order.indexOf(b);
+  if (ia === -1) return b;
+  if (ib === -1) return a;
+  return ia <= ib ? a : b;
+}
+
+function pickHigherEvidenceLevel(a, b) {
+  const order = CONFIG.AI_EVIDENCE_LEVELS; // ['高','中','低']，索引越小越可信
+  const ia = order.indexOf(a), ib = order.indexOf(b);
+  if (ia === -1) return b;
+  if (ib === -1) return a;
+  return ia <= ib ? a : b;
+}
+
+// 日期优先取更可信来源类型的日期；同等可信度时取更早日期；一方未知则取已知的一方
+function pickBetterAiDate(existing, incoming) {
+  const existingKnown = existing.date && existing.date !== 'N/A';
+  const incomingKnown = incoming.date && incoming.date !== 'N/A';
+  if (!existingKnown && incomingKnown) return incoming.date;
+  if (existingKnown && !incomingKnown) return existing.date;
+  if (!existingKnown && !incomingKnown) return 'N/A';
+  const existingMoreTrusted = aiSourceTypePriority(existing.source_type) < aiSourceTypePriority(incoming.source_type);
+  const incomingMoreTrusted = aiSourceTypePriority(incoming.source_type) < aiSourceTypePriority(existing.source_type);
+  if (existingMoreTrusted) return existing.date;
+  if (incomingMoreTrusted) return incoming.date;
+  return existing.date <= incoming.date ? existing.date : incoming.date;
+}
+
+// headline 合并：简化启发式，信息量更大（更长）的视为更具体，避免引入NLP级别的语义判断
+function pickBetterAiHeadline(a, b) {
+  if (!a || a === 'N/A') return b;
+  if (!b || b === 'N/A') return a;
+  return b.length > a.length ? b : a;
+}
+
+// 来源合并：按 URL（无 URL 则按标题）去重，两边来源都保留
+function mergeAiCollabSources(existingSources, incomingSources) {
+  const seen = new Set();
+  const merged = [];
+  for (const s of [...(existingSources || []), ...(incomingSources || [])]) {
+    const key = s.url || s.title;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(s);
+  }
+  return merged;
+}
+
+// 合并两条被判定为同一合作的记录：sources合并去重、evidence_level取最高、direction取更具体的、
+// headline取更具体的、date取更可信来源的、主来源按 source_type 优先级择优（手动导入无URL时不覆盖已有可点击主来源）
+function mergeAiCollabRecords(existing, incoming) {
+  const mergedSources = mergeAiCollabSources(existing.sources, incoming.sources);
+  const incomingHasUrl = incoming.source_url && incoming.source_url !== 'N/A' && incoming.source_url !== 'manual_import';
+  const incomingIsBetterPrimary = incomingHasUrl && aiSourceTypePriority(incoming.source_type) < aiSourceTypePriority(existing.source_type);
+  return {
+    ...existing,
+    date: pickBetterAiDate(existing, incoming),
+    direction: pickMoreSpecificAiDirection(existing.direction, incoming.direction),
+    headline: pickBetterAiHeadline(existing.headline, incoming.headline),
+    source_url: incomingIsBetterPrimary ? incoming.source_url : existing.source_url,
+    source_type: incomingIsBetterPrimary ? incoming.source_type : existing.source_type,
+    evidence_level: pickHigherEvidenceLevel(existing.evidence_level, incoming.evidence_level),
+    sources: mergedSources,
+    // 保留最初发现该合作时的来源分类（auto/manual），手动导入命中已有条目时只作为补充来源，不改变卡片本身的分类
+    source: existing.source,
+  };
+}
+
+// ==================== AI合作：第一级 - grounded 列表提取 ====================
+
+const AI_COLLAB_FIELDS = ['deal_id', 'date', 'pharma', 'ai_partner', 'direction', 'headline', 'source_url', 'source_type', 'evidence_level'];
+
+function buildAiCollabListMessagesGrounded(company, searchContext, lookbackDays) {
+  const sys = `你是一位医药产业与 AI 技术交叉领域的情报分析师，擅长从公开搜索结果中识别 Pharma × AI 合作动态。
+请只基于用户提供的搜索结果提取信息。不要使用搜索结果之外的知识补充事实。不要编造合作、日期、金额、技术细节或来源链接。
+请优先采纳公司官方来源，包括药企官网新闻室、投资者关系页面、公司公告、AI合作方官网新闻稿、合作方技术博客或案例页面。若公司官方来源与媒体报道同时存在，应优先保留官方来源，并可将媒体报道作为补充来源。
+请遵守以下纳入标准：
+1. 目标药企与外部 AI / 数据 / 医疗科技 / 科技公司之间存在明确合作、协议、联合研究、平台共建、项目合作或商业合作；
+2. 合作内容必须与 AI、机器学习、生成式 AI、计算生物学、真实世界数据智能分析、临床试验优化、医学影像算法、数字疗法、患者管理 AI 或商业化 AI 直接相关；
+3. 必须能从公开来源中识别出合作双方、合作方向和来源链接；
+4. 药企战略投资 AI 公司时，只有在同时披露具体合作项目或业务协同时，才纳入；
+5. 云厂商 / IT 公司合作只有在明确涉及 AI / 数据科学 / 医药研发或临床应用时，才纳入。
+请排除以下情况：
+1. 仅为药企内部 AI 战略、组织调整、招聘、白皮书、访谈或高管表态，且没有明确外部合作方；
+2. 普通 IT、云基础设施、数据中心、软件采购，未明确说明 AI / 医药数据分析 / 研发或临床应用；
+3. 仅为融资新闻或药企 VC 投资，未披露具体合作项目；
+4. 仅为媒体评论、趋势文章、预测性报道，未披露具体合作事件；
+5. 仅为学术论文共同署名，但没有合作协议、联合项目或公司层面的合作披露；
+6. 无法找到真实来源链接或无法确认合作双方的条目。
+如果搜索结果无法支持某条合作的存在，不要返回该条目。如果来源链接不确定，宁可不返回，也不要编造链接。
+除公司名、产品名、技术平台名、药物代号等专有名词外，描述性文字请使用中文。`;
+
+  const schema = '{"deal_id":"唯一标识，建议使用 pharma_aiPartner_date 格式","date":"宣布日期，YYYY-MM-DD；无法判断则填 N/A","pharma":"药企方，必须来自目标公司列表，并与原始公司名保持一致","ai_partner":"AI / 数据 / 医疗科技合作方名称","direction":"药物发现 | 临床试验AI | 医学影像 | 真实世界数据 | 生成式AI | 数字疗法 | 数据/平台基础设施 | 商业化/患者服务 | 其他","headline":"一句话概括合作内容，30字内","source_url":"主来源链接，必须来自搜索结果","source_type":"公司公告 | 媒体报道 | 论文/会议 | 合作方官网 | 手动导入","evidence_level":"高 | 中 | 低","sources":[{"title":"来源标题","url":"来源链接","type":"公司公告 | 媒体报道 | 论文/会议 | 合作方官网 | 手动导入 | 其他"}]}';
+
+  const resultsText = searchContext.results.length
+    ? searchContext.results.map((r, i) => `${i + 1}. ${r.title}\n   链接：${r.url}\n   摘要：${r.snippet}`).join('\n')
+    : '（未搜到相关结果）';
+
+  const user = `以下是针对目标药企「${company.name}」在过去 ${lookbackDays} 天内 AI 合作动态的搜索结果：\n\n${resultsText}\n\n请从中提取 Pharma × AI / 数据 / 医疗科技合作条目。\n参考案例包括：Sanofi × Owkin、AstraZeneca × BenevolentAI、Pfizer × ConcertAI，但这些案例仅用于帮助你理解合作类型，不得作为本次搜索结果返回。除非上面的搜索结果显示它们在过去 ${lookbackDays} 天内有新的合作进展，否则不得输出为当前结果。\n\n请返回严格 JSON 对象，格式为 {"collaborations": [合作列表，每条一个对象，字段如下]}，字段 schema：${schema}\n如果没有找到任何符合条件的合作，请返回 {"collaborations": []}。\n不要输出 markdown。不要输出 JSON 之外的解释文字。不要编造信息。`;
+
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+function generateAiCollabId(record) {
+  const base = normalizeCompanyName(`${record.pharma}_${record.ai_partner}_${record.date}`);
+  return base || `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeAiCollabRecord(raw, source) {
+  const record = {};
+  for (const f of AI_COLLAB_FIELDS) {
+    record[f] = (raw[f] === undefined || raw[f] === null || raw[f] === '') ? 'N/A' : raw[f];
+  }
+  if (!CONFIG.AI_DIRECTIONS.includes(record.direction)) record.direction = '其他';
+  if (!CONFIG.AI_SOURCE_TYPES.includes(record.source_type)) record.source_type = source === 'manual' ? '手动导入' : '媒体报道';
+  if (!CONFIG.AI_EVIDENCE_LEVELS.includes(record.evidence_level)) record.evidence_level = source === 'manual' ? '中' : '低';
+  record.sources = Array.isArray(raw.sources) && raw.sources.length
+    ? raw.sources.map(s => ({ title: s.title || record.headline, url: s.url || record.source_url, type: s.type || record.source_type }))
+    : [{ title: record.headline, url: record.source_url, type: record.source_type }];
+  record.source = source; // 'auto' | 'manual'
+  record.deal_id = (record.deal_id && record.deal_id !== 'N/A') ? record.deal_id : generateAiCollabId(record);
+  return record;
+}
+
+// 对一家公司做完整的"搜索 -> grounded LLM 提取"流程；已 grounded 的请求强制关闭 web_search_options（原因同 BD 板块）
+async function fetchAiCollabsForCompany(company, s, lookbackDays) {
+  if (aiSearchProgress) {
+    aiSearchProgress = { ...aiSearchProgress, phase: 'searching', companyName: company.name };
+    renderAiSearchProgress();
+  }
+  const context = await gatherAiSearchContextForCompany(company, s.searchProvider, s.searchApiKey);
+  const messages = buildAiCollabListMessagesGrounded(company, context, lookbackDays);
+  const llmSettings = { ...s, webSearchEnabled: false };
+
+  if (aiSearchProgress) {
+    aiSearchProgress = { ...aiSearchProgress, phase: 'analyzing' };
+    renderAiSearchProgress();
+  }
+
+  const parsed = await callLLM(messages, llmSettings);
+  const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.collaborations) ? parsed.collaborations : null);
+  if (!list) {
+    const err = new Error('JSON 结构不符合预期（缺少 collaborations 数组）'); err.type = 'parse_error'; err.raw = JSON.stringify(parsed); throw err;
+  }
+  if (aiSearchProgress) {
+    aiSearchProgress = { ...aiSearchProgress, current: aiSearchProgress.current + 1 };
+    renderAiSearchProgress();
+  }
+  return { collabs: list.map(d => normalizeAiCollabRecord(d, 'auto')), partialErrors: context.partialErrors };
+}
+
+// 处理一家公司：去重合并进已有列表并立即渲染；公司本身就是最小处理单位，超时不再进一步拆分
+async function processAiCollabBatch(company, lookbackDays) {
+  try {
+    const { collabs, partialErrors } = await fetchAiCollabsForCompany(company, settings, lookbackDays);
+    for (const collab of collabs) {
+      const idx = findMatchingAiCollabIndex(aiCollabCacheData.collaborations, collab);
+      if (idx === -1) {
+        aiCollabCacheData.collaborations.push(collab);
+      } else {
+        aiCollabCacheData.collaborations[idx] = mergeAiCollabRecords(aiCollabCacheData.collaborations[idx], collab);
+      }
+    }
+    if (partialErrors && partialErrors.length) {
+      aiErrorMessages.push(`${company.name}：部分检索请求失败（已跳过，不影响其他公司）：${partialErrors[0]}`);
+    }
+  } catch (err) {
+    aiErrorMessages.push(`[${company.name}] ${err.message}${err.raw ? '（原始返回：' + String(err.raw).slice(0, 150) + '…）' : ''}`);
+  }
+
+  aiCollabCacheData.updatedAt = new Date().toISOString();
+  saveAiCollabCacheToStorage(aiCollabCacheData);
+
+  renderAiErrorBanner();
+  renderAiToolbar();
+  populateAiFilters();
+  renderAiCollabCards();
+}
+
+// 暂停/继续：跟 BD 板块同一套模式，只在两家公司之间生效
+function togglePauseAiSearch() {
+  aiIsPaused = !aiIsPaused;
+  if (!aiIsPaused) {
+    const waiters = aiPauseWaiters;
+    aiPauseWaiters = [];
+    waiters.forEach(resolve => resolve());
+  }
+  renderAiSearchProgress();
+}
+function waitIfAiPaused() {
+  if (!aiIsPaused) return Promise.resolve();
+  return new Promise(resolve => { aiPauseWaiters.push(resolve); });
+}
+
+async function refreshAiCollabs() {
+  if (aiIsLoading || isLoading || bdIsLoading) return;
+  if (!settings.searchApiKey) {
+    aiErrorMessages = ['AI合作板块依赖真实搜索结果来降低编造风险，请先在设置面板配置搜索服务商 API Key 后再刷新'];
+    renderAiErrorBanner();
+    return;
+  }
+  aiIsLoading = true;
+  aiIsPaused = false;
+  aiPauseWaiters = [];
+  aiErrorMessages = [];
+  const lookbackDays = getAiLookbackDays(aiCollabCacheData);
+  aiSearchProgress = { current: 0, total: CONFIG.COMPANIES.length, phase: 'searching', companyName: '' };
+  renderAiErrorBanner();
+  renderAiSearchProgress();
+  updateAiRefreshButtonState(true);
+  if (!aiCollabCacheData) aiCollabCacheData = { updatedAt: null, lookbackDays, collaborations: [] };
+  renderAiCollabCards();
+
+  for (const company of CONFIG.COMPANIES) {
+    await waitIfAiPaused();
+    await processAiCollabBatch(company, lookbackDays);
+  }
+
+  aiCollabCacheData.lookbackDays = lookbackDays;
+  saveAiCollabCacheToStorage(aiCollabCacheData);
+
+  aiSearchProgress = null;
+  aiIsPaused = false;
+  aiIsLoading = false;
+  updateAiRefreshButtonState(false);
+  renderAiSearchProgress();
+  renderAiToolbar();
+}
+
+function updateAiRefreshButtonState(loading) {
+  const btn = document.getElementById('aiRefreshBtn');
+  btn.textContent = loading ? '⏳ 搜索中…' : '🔄 刷新 AI 合作';
+  syncRefreshButtonsDisabled();
+}
+
+// ==================== AI合作：第二级 - 深挖分析 ====================
+
+function buildAiCollabDetailMessages(collab) {
+  const sys = `你是一位同时熟悉医药产业和 AI 技术的资深分析师，擅长解读 Pharma × AI 合作的技术逻辑与战略意图。
+请基于公开来源进行分析，并严格区分事实与分析性推断。
+要求：
+- 不要编造未披露的事实；
+- 不要编造来源链接；
+- 如果公开信息没有披露具体模型、数据类型、金额、合作期限、疾病领域或项目阶段，请明确说明「公开信息未披露」；
+- 对双方合作动机的分析可以是推断，但必须使用「可能」「体现出」「或许说明」等谨慎表述；
+- 所有来源必须是真实链接；
+- 优先使用公司官方来源，包括药企官网新闻室、投资者关系页面、公司公告、AI合作方官网新闻稿、合作方技术博客或案例页面；
+- 若公司官方来源与媒体报道同时存在，应优先依据官方来源，并用媒体报道作为补充；
+- 除公司名、产品名、平台名、药物代号和专业术语外，描述性文字请使用中文。`;
+
+  const schema = '{"tech_detail":"AI伙伴提供的核心技术/能力，100字内","use_case":"具体应用场景与预期成果，100字内","rationale_pharma":"药企为什么可能选择这个AI伙伴，80字内","rationale_ai":"AI公司为什么可能选择这个药企，80字内","strategic_fit":"与药企治疗领域、管线、研发模式或数字化战略的协同点，100字内；信息不足则说明无法判断","industry_signal_type":"AI药物发现成熟化 | 临床运营自动化 | 真实世界数据资产化 | 生成式AI进入药企流程 | 影像AI商业化 | 数据平台化 | 其他","industry_signal":"行业信号意义，80字内","comparable_deals":["1-2个同类参考案例；如无可靠信息则为空数组"],"missing_info":["公开信息未披露的信息点"],"confidence":"高 | 中 | 低","sources":[{"title":"来源标题","url":"来源URL","type":"公司公告 | 媒体报道 | 论文/会议 | 合作方官网 | 其他"}]}';
+
+  const sourcesText = (collab.sources || []).map(s => `- ${s.title || ''}（${s.type || ''}）：${s.url || ''}`).join('\n') || '（无）';
+
+  const user = `请深度分析以下 Pharma × AI 合作：\n\n药企：${collab.pharma}\nAI / 科技合作方：${collab.ai_partner}\n合作方向：${collab.direction}\n一句话概括：${collab.headline}\n主来源：${collab.source_url}\n全部已知来源：\n${sourcesText}\n\n请优先搜索和参考：\n1. 双方公司公告 / 新闻室；\n2. 药企 Investor Relations / 公司公告；\n3. AI 合作方官网新闻稿、技术博客或案例页面；\n4. 可信媒体报道；\n5. 学术论文、会议摘要或技术页面；\n6. 若存在多个来源，请优先使用公司公告和官方来源。\n\n请输出严格 JSON，字段 schema：${schema}\n不要输出 markdown。不要输出 JSON 之外的解释文字。不要编造未披露信息。`;
+
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+function normalizeAiCollabDetail(raw) {
+  return {
+    tech_detail: raw.tech_detail || 'N/A',
+    use_case: raw.use_case || 'N/A',
+    rationale_pharma: raw.rationale_pharma || 'N/A',
+    rationale_ai: raw.rationale_ai || 'N/A',
+    strategic_fit: raw.strategic_fit || 'N/A',
+    industry_signal_type: raw.industry_signal_type || 'N/A',
+    industry_signal: raw.industry_signal || 'N/A',
+    comparable_deals: Array.isArray(raw.comparable_deals) ? raw.comparable_deals : [],
+    missing_info: Array.isArray(raw.missing_info) ? raw.missing_info : [],
+    confidence: CONFIG.AI_EVIDENCE_LEVELS.includes(raw.confidence) ? raw.confidence : 'N/A',
+    sources: Array.isArray(raw.sources) ? raw.sources : [],
+  };
+}
+
+// forceReanalyze=true 时忽略缓存直接重新请求（"🔄 重新分析"按钮），否则命中缓存直接展示 + 支持手风琴收起
+async function handleAiDeepDive(collabId, forceReanalyze) {
+  const collab = (aiCollabCacheData?.collaborations || []).find(c => c.deal_id === collabId);
+  if (!collab) return;
+
+  if (!forceReanalyze) {
+    if (expandedAiCollabId === collabId) { expandedAiCollabId = null; renderAiCollabCards(); return; }
+    if (aiCollabDetailCache[collabId]) { expandedAiCollabId = collabId; renderAiCollabCards(); return; }
+  }
+
+  expandedAiCollabId = collabId;
+  aiLoadingDetailId = collabId;
+  renderAiCollabCards();
+
+  try {
+    const parsed = await callLLM(buildAiCollabDetailMessages(collab), settings);
+    aiCollabDetailCache[collabId] = { updatedAt: new Date().toISOString(), detail: normalizeAiCollabDetail(parsed) };
+  } catch (err) {
+    aiCollabDetailCache[collabId] = { updatedAt: new Date().toISOString(), detail: { _error: true, _errorMessage: err.message } };
+  }
+  saveAiCollabDetailCacheToStorage(aiCollabDetailCache);
+
+  aiLoadingDetailId = null;
+  renderAiCollabCards();
+}
+
+// ==================== AI合作：粘贴原文解析 ====================
+
+function buildAiCollabPasteMessages(rawText) {
+  const sys = `你是一位医药产业与 AI 技术交叉领域的情报分析师，擅长从文章、新闻稿和行业报道中提取 Pharma × AI 合作信息。
+请只基于用户粘贴的原文提取信息。不要使用外部知识补充事实。不要编造公司、合作、日期或链接。
+请遵守以下纳入标准：
+1. 必须有目标药企；
+2. 必须有外部 AI / 数据 / 医疗科技 / 科技合作方；
+3. 必须有明确 AI / ML / 数据科学 / 生成式 AI / 数字技术在医药场景中的应用；
+4. 如果只是药企内部 AI 战略、访谈、招聘、白皮书或普通云服务采购，不要提取为合作条目。
+除公司名、产品名、平台名、药物代号和专业术语外，描述性文字请使用中文。`;
+
+  const schema = '{"deal_id":"唯一标识，建议使用 pharma_aiPartner_date_manual","date":"宣布日期，YYYY-MM-DD；无法判断则填 N/A","pharma":"药企方","ai_partner":"AI / 数据 / 医疗科技合作方名称","direction":"药物发现 | 临床试验AI | 医学影像 | 真实世界数据 | 生成式AI | 数字疗法 | 数据/平台基础设施 | 商业化/患者服务 | 其他","headline":"一句话概括合作内容，30字内","source_url":"如果原文提供URL则填写；否则填 manual_import","source_type":"手动导入","evidence_level":"中","sources":[{"title":"手动导入","url":"manual_import","type":"手动导入"}]}';
+
+  const user = `以下是用户粘贴的文章或资料原文。请从中提取 Pharma × AI / 数据 / 医疗科技合作条目。\n如果原文中没有明确 AI 合作信息，请返回空数组。\n请返回严格 JSON：{"collaborations":[合作列表，字段如下]}，字段 schema：${schema}\n不要输出 markdown。不要输出 JSON 之外的解释文字。不要编造信息。\n\n文章原文：\n"""\n${rawText.slice(0, 8000)}\n"""`;
+
+  return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+async function handleAiPasteParseSubmit() {
+  const text = document.getElementById('aiPasteInput').value.trim();
+  const status = document.getElementById('aiPasteStatus');
+  if (!text) {
+    status.textContent = '请先粘贴文章内容';
+    status.className = 'text-sm h-5 text-rose-600 dark:text-rose-400';
+    return;
+  }
+  const btn = document.getElementById('aiPasteParseSubmitBtn');
+  btn.disabled = true;
+  status.textContent = '解析中…';
+  status.className = 'text-sm h-5 text-slate-500 dark:text-slate-400';
+
+  try {
+    const parsed = await callLLM(buildAiCollabPasteMessages(text), { ...settings, webSearchEnabled: false });
+    const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.collaborations) ? parsed.collaborations : null);
+    if (!list || !list.length) {
+      status.textContent = '未从原文中识别出 AI 合作信息';
+      status.className = 'text-sm h-5 text-amber-600 dark:text-amber-400';
+      return;
+    }
+    if (!aiCollabCacheData) aiCollabCacheData = { updatedAt: new Date().toISOString(), lookbackDays: CONFIG.AI_LOOKBACK_DEFAULT_DAYS, collaborations: [] };
+    let addedCount = 0, mergedCount = 0;
+    for (const raw of list) {
+      const manualCollab = normalizeAiCollabRecord(raw, 'manual');
+      const idx = findMatchingAiCollabIndex(aiCollabCacheData.collaborations, manualCollab);
+      if (idx === -1) {
+        addedCount++;
+        aiCollabCacheData.collaborations.push(manualCollab);
+      } else {
+        mergedCount++;
+        aiCollabCacheData.collaborations[idx] = mergeAiCollabRecords(aiCollabCacheData.collaborations[idx], manualCollab);
+      }
+    }
+    aiCollabCacheData.updatedAt = new Date().toISOString();
+    saveAiCollabCacheToStorage(aiCollabCacheData);
+    status.textContent = `✅ 已识别 ${list.length} 条：新增 ${addedCount} 条，合并进已有条目 ${mergedCount} 条`;
+    status.className = 'text-sm h-5 text-emerald-600 dark:text-emerald-400';
+    document.getElementById('aiPasteInput').value = '';
+    renderAiToolbar();
+    populateAiFilters();
+    renderAiCollabCards();
+    setTimeout(closeAiPasteModal, 1500);
+  } catch (err) {
+    status.textContent = `解析失败：${err.message}`;
+    status.className = 'text-sm h-5 text-rose-600 dark:text-rose-400';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openAiPasteModal() {
+  document.getElementById('aiPasteModalOverlay').classList.remove('hidden');
+  document.getElementById('aiPasteModalOverlay').classList.add('flex');
+}
+function closeAiPasteModal() {
+  document.getElementById('aiPasteModalOverlay').classList.add('hidden');
+  document.getElementById('aiPasteModalOverlay').classList.remove('flex');
+  document.getElementById('aiPasteStatus').textContent = '';
+}
+
+// ==================== AI合作：渲染 ====================
+
+function aiDirectionCls(direction) {
+  const map = {
+    '药物发现': 'bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300',
+    '临床试验AI': 'bg-blue-50 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300',
+    '医学影像': 'bg-cyan-50 dark:bg-cyan-900/40 text-cyan-600 dark:text-cyan-300',
+    '真实世界数据': 'bg-teal-50 dark:bg-teal-900/40 text-teal-600 dark:text-teal-300',
+    '生成式AI': 'bg-purple-50 dark:bg-purple-900/40 text-purple-600 dark:text-purple-300',
+    '数字疗法': 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300',
+    '数据/平台基础设施': 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
+    '商业化/患者服务': 'bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300',
+    '其他': 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300',
+  };
+  return map[direction] || map['其他'];
+}
+
+function aiEvidenceCls(level) {
+  if (level === '高') return 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300';
+  if (level === '中') return 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300';
+  if (level === '低') return 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300';
+  return 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400';
+}
+
+function getFilteredAiCollabs() {
+  let list = aiCollabCacheData?.collaborations || [];
+  if (aiFilterCompany !== 'all') list = list.filter(c => c.pharma === aiFilterCompany);
+  if (aiFilterDirection !== 'all') list = list.filter(c => c.direction === aiFilterDirection);
+  if (aiFilterEvidenceLevel !== 'all') list = list.filter(c => c.evidence_level === aiFilterEvidenceLevel);
+  if (aiFilterSourceType !== 'all') list = list.filter(c => c.source_type === aiFilterSourceType);
+  return list;
+}
+
+function aiCollabDetailBlockHtml(collabId) {
+  if (aiLoadingDetailId === collabId) {
+    return `<div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 space-y-2">
+      <div class="skeleton h-4 w-1/2 rounded"></div>
+      <div class="skeleton h-4 w-full rounded"></div>
+      <div class="skeleton h-4 w-full rounded"></div>
+    </div>`;
+  }
+  const cached = aiCollabDetailCache[collabId];
+  if (!cached) return '';
+  const detail = cached.detail;
+  if (detail._error) {
+    return `<div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 text-sm text-rose-600 dark:text-rose-400 flex items-center justify-between gap-2">
+      <span>❌ 深挖分析失败：${escapeHtml(detail._errorMessage)}</span>
+      <button data-ai-reanalyze="${escapeHtml(collabId)}" class="shrink-0 text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700">🔄 重试</button>
+    </div>`;
+  }
+  const comparableDeals = detail.comparable_deals.length
+    ? detail.comparable_deals.map(d => `<li>${escapeHtml(d)}</li>`).join('')
+    : '<li class="text-slate-400">暂无</li>';
+  const missingInfo = detail.missing_info.length
+    ? detail.missing_info.map(m => `<li>${escapeHtml(m)}</li>`).join('')
+    : '<li class="text-slate-400">无</li>';
+  const sources = detail.sources.length
+    ? detail.sources.map(s => `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline block truncate">${escapeHtml(s.title || s.url)}（${escapeHtml(s.type || '')}）</a>`).join('')
+    : '<div class="text-slate-400">待确认</div>';
+  return `
+    <div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3 text-sm">
+      <div class="flex items-center justify-between">
+        <span class="text-xs text-slate-400">分析生成于：${formatDateTime(cached.updatedAt)}</span>
+        <button data-ai-reanalyze="${escapeHtml(collabId)}" class="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700">🔄 重新分析</button>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🤖 技术解析</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>${escapeHtml(formatFieldValue(detail.tech_detail))}</div>
+          <div>${escapeHtml(formatFieldValue(detail.use_case))}</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🎯 合作动机</div>
+        <div class="text-xs text-slate-400 mb-1">以下为基于公开信息的分析性判断，不代表双方官方表述。</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>药企视角：${escapeHtml(formatFieldValue(detail.rationale_pharma))}</div>
+          <div>AI伙伴视角：${escapeHtml(formatFieldValue(detail.rationale_ai))}</div>
+        </div>
+      </div>
+      <div><div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🔗 战略协同</div><div class="text-slate-600 dark:text-slate-300">${escapeHtml(formatFieldValue(detail.strategic_fit))}</div></div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">📡 行业信号</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>信号类型：${escapeHtml(formatFieldValue(detail.industry_signal_type))}</div>
+          <div>${escapeHtml(formatFieldValue(detail.industry_signal))}</div>
+          <div>参考案例：<ul class="list-disc list-inside">${comparableDeals}</ul></div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">信息完整度：${escapeHtml(formatFieldValue(detail.confidence))}</div>
+        <div>未披露信息：<ul class="list-disc list-inside text-slate-600 dark:text-slate-300">${missingInfo}</ul></div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">来源</div>
+        <div class="space-y-0.5">${sources}</div>
+      </div>
+    </div>`;
+}
+
+function aiCollabCardHtml(collab) {
+  const isExpanded = expandedAiCollabId === collab.deal_id;
+  const hasSourceUrl = collab.source_url && collab.source_url !== 'N/A' && collab.source_url !== 'manual_import';
+  const extraSourceCount = Math.max(0, (collab.sources || []).length - 1);
+  return `
+    <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-white dark:bg-slate-800 flex flex-col" data-ai-card="${escapeHtml(collab.deal_id)}">
+      <div class="flex items-start justify-between gap-2 flex-wrap">
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium ${aiDirectionCls(collab.direction)}">${escapeHtml(collab.direction)}</span>
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium ${aiEvidenceCls(collab.evidence_level)}">证据：${escapeHtml(collab.evidence_level)}</span>
+      </div>
+      <div class="mt-2 font-bold">${escapeHtml(collab.pharma)} × ${escapeHtml(collab.ai_partner)}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300 mt-1 flex-1">${escapeHtml(formatFieldValue(collab.headline))}</div>
+      <div class="text-xs text-slate-400 mt-2">${escapeHtml(formatFieldValue(collab.date))}${collab.source === 'manual' ? ' ｜ 来源：手动导入' : ''}</div>
+      <div class="text-xs text-slate-400">来源：${escapeHtml(collab.source_type)}${extraSourceCount > 0 ? ' + ' + extraSourceCount : ''}</div>
+      ${hasSourceUrl ? `<a href="${escapeHtml(collab.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(collab.source_url)}</a>` : ''}
+      <button data-ai-deep-dive="${escapeHtml(collab.deal_id)}" class="mt-2 text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-medium self-start">🔍 深挖分析</button>
+      ${isExpanded ? aiCollabDetailBlockHtml(collab.deal_id) : ''}
+    </div>`;
+}
+
+function aiEmptyStateHtml() {
+  return `<div class="col-span-full text-center py-16 text-slate-400">
+    <div class="text-4xl mb-2">🤖</div>
+    <div>点击「🔄 刷新 AI 合作」搜索最近的 Pharma × AI 合作动态</div>
+  </div>`;
+}
+
+function aiNoMatchHtml() {
+  return `<div class="col-span-full text-center py-16 text-slate-400">没有符合筛选条件的合作</div>`;
+}
+
+function renderAiCollabCards() {
+  const container = document.getElementById('aiCollabGrid');
+  if (!aiCollabCacheData) { container.innerHTML = aiEmptyStateHtml(); return; }
+  const list = getFilteredAiCollabs();
+  if (!list.length) {
+    container.innerHTML = aiIsLoading ? bdSkeletonHtml() : aiNoMatchHtml();
+    return;
+  }
+  container.innerHTML = list.map(aiCollabCardHtml).join('');
+}
+
+function renderAiErrorBanner() {
+  const el = document.getElementById('aiErrorBanner');
+  if (!aiErrorMessages.length) { el.innerHTML = ''; return; }
+  el.innerHTML = aiErrorMessages.map(msg => `
+    <div class="px-4 py-3 rounded-lg bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-200 text-sm">
+      ❌ ${escapeHtml(msg)}
+    </div>
+  `).join('');
+}
+
+function renderAiToolbar() {
+  const el = document.getElementById('aiLastUpdatedText');
+  const lookbackEl = document.getElementById('aiLookbackText');
+  if (!aiCollabCacheData || !aiCollabCacheData.updatedAt) {
+    el.textContent = '尚未获取过数据';
+    lookbackEl.textContent = '';
+    return;
+  }
+  const stale = daysSince(aiCollabCacheData.updatedAt) > CONFIG.CACHE_WARN_DAYS;
+  el.innerHTML = `上次更新时间：${formatDateTime(aiCollabCacheData.updatedAt)}` +
+    (stale ? ' <span class="ml-1 px-2 py-0.5 rounded bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-xs">数据已超过 3 天，建议刷新</span>' : '');
+  lookbackEl.textContent = aiCollabCacheData.lookbackDays ? `（上次搜索范围：过去 ${aiCollabCacheData.lookbackDays} 天）` : '';
+}
+
+function renderAiSearchProgress() {
+  const container = document.getElementById('aiSearchProgress');
+  const pauseBtn = document.getElementById('aiPauseResumeBtn');
+  if (!aiSearchProgress) { container.classList.add('hidden'); return; }
+  container.classList.remove('hidden');
+  const { current, total, phase, companyName } = aiSearchProgress;
+  const bar = document.getElementById('aiSearchProgressBar');
+  const text = document.getElementById('aiSearchProgressText');
+  pauseBtn.textContent = aiIsPaused ? '▶ 继续' : '⏸ 暂停';
+  if (aiIsPaused) {
+    text.textContent = `⏸ 已暂停（${companyName ? '下一家：' + companyName + '，' : ''}${current}/${total}）`;
+    return;
+  }
+  if (phase === 'analyzing') {
+    bar.style.width = '100%';
+    text.textContent = `🤖 AI 正在分析：${companyName || ''}（${current}/${total}）`;
+  } else {
+    const pct = total ? Math.round((current / total) * 100) : 0;
+    bar.style.width = `${pct}%`;
+    text.textContent = `🔍 正在检索：${companyName || ''}（${current}/${total}）`;
+  }
+}
+
+function populateAiFilters() {
+  const companySelect = document.getElementById('aiCompanyFilter');
+  const currentCompany = companySelect.value;
+  const companiesInList = new Set((aiCollabCacheData?.collaborations || []).map(c => c.pharma));
+  companySelect.innerHTML = '<option value="all">全部公司</option>' +
+    CONFIG.COMPANIES.filter(c => companiesInList.has(c.name)).map(c => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('');
+  if ([...companySelect.options].some(o => o.value === currentCompany)) companySelect.value = currentCompany;
+
+  const directionSelect = document.getElementById('aiDirectionFilter');
+  const currentDirection = directionSelect.value;
+  directionSelect.innerHTML = '<option value="all">全部方向</option>' +
+    CONFIG.AI_DIRECTIONS.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+  if ([...directionSelect.options].some(o => o.value === currentDirection)) directionSelect.value = currentDirection;
+
+  const evidenceSelect = document.getElementById('aiEvidenceFilter');
+  const currentEvidence = evidenceSelect.value;
+  evidenceSelect.innerHTML = '<option value="all">全部证据等级</option>' +
+    CONFIG.AI_EVIDENCE_LEVELS.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  if ([...evidenceSelect.options].some(o => o.value === currentEvidence)) evidenceSelect.value = currentEvidence;
+
+  const sourceTypeSelect = document.getElementById('aiSourceTypeFilter');
+  const currentSourceType = sourceTypeSelect.value;
+  sourceTypeSelect.innerHTML = '<option value="all">全部来源类型</option>' +
+    CONFIG.AI_SOURCE_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  if ([...sourceTypeSelect.options].some(o => o.value === currentSourceType)) sourceTypeSelect.value = currentSourceType;
+}
+
 // ==================== Tab 切换 ====================
 
 function switchTab(tab) {
   document.getElementById('tabPanel-market').classList.toggle('hidden', tab !== 'market');
   document.getElementById('tabPanel-bd').classList.toggle('hidden', tab !== 'bd');
+  document.getElementById('tabPanel-ai').classList.toggle('hidden', tab !== 'ai');
   document.querySelectorAll('.tab-btn').forEach(btn => {
     const active = btn.dataset.tab === tab;
     btn.classList.toggle('border-indigo-500', active);
@@ -1576,6 +2384,7 @@ function switchTab(tab) {
   if (tab === 'bd' && !bdCacheData && !bdIsLoading && !isLoading) {
     refreshBdDeals();
   }
+  // AI合作板块明确要求：页面/Tab 切换时不自动调用 LLM，只读缓存展示，必须用户手动点「刷新 AI 合作」才会触发请求
 }
 
 // ==================== 设置面板交互 ====================
@@ -1757,6 +2566,29 @@ function init() {
   document.getElementById('bdDealList').addEventListener('click', (e) => {
     const deepDiveBtn = e.target.closest('[data-deep-dive]');
     if (deepDiveBtn) handleDeepDive(deepDiveBtn.dataset.deepDive);
+  });
+
+  // AI合作板块：页面加载时只读缓存展示，不自动调用 LLM
+  aiCollabCacheData = loadAiCollabCache();
+  aiCollabDetailCache = loadAiCollabDetailCache();
+  renderAiToolbar();
+  populateAiFilters();
+  renderAiCollabCards();
+
+  document.getElementById('aiRefreshBtn').addEventListener('click', refreshAiCollabs);
+  document.getElementById('aiPauseResumeBtn').addEventListener('click', togglePauseAiSearch);
+  document.getElementById('aiPasteParseBtn').addEventListener('click', openAiPasteModal);
+  document.getElementById('closeAiPasteModalBtn').addEventListener('click', closeAiPasteModal);
+  document.getElementById('aiPasteParseSubmitBtn').addEventListener('click', handleAiPasteParseSubmit);
+  document.getElementById('aiCompanyFilter').addEventListener('change', (e) => { aiFilterCompany = e.target.value; renderAiCollabCards(); });
+  document.getElementById('aiDirectionFilter').addEventListener('change', (e) => { aiFilterDirection = e.target.value; renderAiCollabCards(); });
+  document.getElementById('aiEvidenceFilter').addEventListener('change', (e) => { aiFilterEvidenceLevel = e.target.value; renderAiCollabCards(); });
+  document.getElementById('aiSourceTypeFilter').addEventListener('change', (e) => { aiFilterSourceType = e.target.value; renderAiCollabCards(); });
+  document.getElementById('aiCollabGrid').addEventListener('click', (e) => {
+    const reanalyzeBtn = e.target.closest('[data-ai-reanalyze]');
+    if (reanalyzeBtn) { handleAiDeepDive(reanalyzeBtn.dataset.aiReanalyze, true); return; }
+    const deepDiveBtn = e.target.closest('[data-ai-deep-dive]');
+    if (deepDiveBtn) handleAiDeepDive(deepDiveBtn.dataset.aiDeepDive, false);
   });
 
   document.getElementById('providerPresetSelect').addEventListener('change', handleProviderPresetChange);
