@@ -483,6 +483,7 @@ let bdIsPaused = false;         // 是否已暂停（在两家公司之间生效
 let bdPauseWaiters = [];        // 暂停期间挂起的 resolve 回调，点击继续时统一唤醒
 let bdSearchDiagnostics = null; // 本次刷新的检索诊断（见 createEmptySearchDiagnostics）
 let bdBackcheckLoadingId = null; // 正在反查官方来源的交易 id
+let bdAbortRequested = false;   // 由 ensureBdIdle() 设置，用于安全中止一个暂停中/进行中的旧刷新循环
 
 // ---- AI合作板块状态 ----
 let aiCollabCacheData = null;   // { updatedAt, lookbackDays, collaborations: [...] }
@@ -501,6 +502,7 @@ let aiIsPaused = false;
 let aiPauseWaiters = [];
 let aiSearchDiagnostics = null; // 本次刷新的检索诊断（见 createEmptySearchDiagnostics）
 let aiBackcheckLoadingId = null; // 正在反查官方来源的合作 id
+let aiAbortRequested = false;   // 由 ensureAiIdle() 设置，用于安全中止一个暂停中/进行中的旧刷新循环
 
 // ==================== 工具函数 ====================
 
@@ -920,7 +922,7 @@ async function processCompanyBatch(batch) {
 }
 
 async function refreshAllData() {
-  if (isLoading || bdIsLoading || aiIsLoading) return;
+  if (isLoading || (bdIsLoading && !bdIsPaused) || (aiIsLoading && !aiIsPaused)) return;
   isLoading = true;
   errorMessages = [];
   renderErrorBanner();
@@ -966,14 +968,17 @@ function updateRefreshButtonState(loading) {
   syncRefreshButtonsDisabled();
 }
 
-// 三个板块的刷新互斥：任一板块正在加载时，三个刷新按钮都禁用，避免并发抢占同一个 API 配额
+// 三个板块的刷新互斥：任一板块正在"活跃"加载（未暂停）时，禁用会与其抢占同一 API 配额的其他按钮。
+// 暂停中的板块不算"活跃"——此时没有请求在飞行，允许操作其他板块，也允许对暂停中的板块本身重新触发
+// （重新触发会先经 ensureBdIdle()/ensureAiIdle() 安全中止旧的暂停循环，见 handleBdClearAndRefresh 等）
 function syncRefreshButtonsDisabled() {
-  const busy = isLoading || bdIsLoading || aiIsLoading;
-  document.getElementById('refreshBtn').disabled = busy;
-  document.getElementById('bdRefreshBtn').disabled = busy;
-  document.getElementById('aiRefreshBtn').disabled = busy;
-  document.getElementById('bdClearRefreshBtn').disabled = busy;
-  document.getElementById('aiClearRefreshBtn').disabled = busy;
+  const bdBusy = bdIsLoading && !bdIsPaused;
+  const aiBusy = aiIsLoading && !aiIsPaused;
+  document.getElementById('refreshBtn').disabled = isLoading || bdBusy || aiBusy;
+  document.getElementById('bdRefreshBtn').disabled = isLoading || aiBusy;
+  document.getElementById('aiRefreshBtn').disabled = isLoading || bdBusy;
+  document.getElementById('bdClearRefreshBtn').disabled = isLoading || aiBusy;
+  document.getElementById('aiClearRefreshBtn').disabled = isLoading || bdBusy;
 }
 
 // ==================== 渲染 ====================
@@ -1898,6 +1903,17 @@ function togglePauseBdSearch() {
     waiters.forEach(resolve => resolve());
   }
   renderBdSearchProgress();
+  syncRefreshButtonsDisabled();
+}
+
+// 若 BD 当前有暂停中/进行中的旧刷新循环，先请求中止并等它安全退出，再允许发起新一轮；
+// 空闲状态直接返回，不影响正常路径
+async function ensureBdIdle() {
+  if (!bdIsLoading) return;
+  bdAbortRequested = true;
+  if (bdIsPaused) togglePauseBdSearch(); // 唤醒暂停中的等待，让旧循环观察到中止标记并退出
+  while (bdIsLoading) await sleep(100);
+  bdAbortRequested = false;
 }
 
 function waitIfBdPaused() {
@@ -1906,7 +1922,8 @@ function waitIfBdPaused() {
 }
 
 async function refreshBdDeals() {
-  if (bdIsLoading || isLoading || aiIsLoading) return;
+  if (isLoading || (aiIsLoading && !aiIsPaused)) return;
+  await ensureBdIdle(); // 若自身有暂停中/进行中的旧一轮，先安全中止再开始新一轮
   bdIsLoading = true;
   bdIsPaused = false;
   bdPauseWaiters = [];
@@ -1928,6 +1945,7 @@ async function refreshBdDeals() {
   const batches = chunkArray(CONFIG.COMPANIES, CONFIG.BD_BATCH_SIZE);
   for (const batch of batches) {
     await waitIfBdPaused();
+    if (bdAbortRequested) break; // 被 ensureBdIdle() 请求中止（例如用户点了「清空并重新检索」）
     await processBdBatch(batch, previousDeals, newlyFetchedDeals, lookbackDays, lookbackMode);
   }
 
@@ -1945,10 +1963,12 @@ function updateBdRefreshButtonState(loading) {
 }
 
 // 清空当前已缓存的交易/深挖详情/检索诊断后再触发一次完整重新检索；与「🔄 刷新交易」的增量合并不同，
-// 这里会先丢弃旧记录，避免旧格式字段、误判交易或过期数据在合并中一直残留
-function handleBdClearAndRefresh() {
-  if (bdIsLoading || isLoading || aiIsLoading) return;
+// 这里会先丢弃旧记录，避免旧格式字段、误判交易或过期数据在合并中一直残留。
+// 若 BD 自身正处于暂停中，ensureBdIdle() 会先安全中止旧一轮（不会因为"暂停中"就点不动）
+async function handleBdClearAndRefresh() {
+  if (isLoading || (aiIsLoading && !aiIsPaused)) return;
   if (!confirm('确定要清空当前已缓存的 BD 交易记录并重新检索吗？此操作不可撤销。')) return;
+  await ensureBdIdle();
   bdCacheData = null;
   bdDetailCache = {};
   bdSearchDiagnostics = null;
@@ -2931,19 +2951,31 @@ function togglePauseAiSearch() {
     waiters.forEach(resolve => resolve());
   }
   renderAiSearchProgress();
+  syncRefreshButtonsDisabled();
 }
+
+// 若 AI 当前有暂停中/进行中的旧刷新循环，先请求中止并等它安全退出，再允许发起新一轮，逻辑同 ensureBdIdle
+async function ensureAiIdle() {
+  if (!aiIsLoading) return;
+  aiAbortRequested = true;
+  if (aiIsPaused) togglePauseAiSearch();
+  while (aiIsLoading) await sleep(100);
+  aiAbortRequested = false;
+}
+
 function waitIfAiPaused() {
   if (!aiIsPaused) return Promise.resolve();
   return new Promise(resolve => { aiPauseWaiters.push(resolve); });
 }
 
 async function refreshAiCollabs() {
-  if (aiIsLoading || isLoading || bdIsLoading) return;
+  if (isLoading || (bdIsLoading && !bdIsPaused)) return;
   if (!settings.searchApiKey) {
     aiErrorMessages = ['AI合作板块依赖真实搜索结果来降低编造风险，请先在设置面板配置搜索服务商 API Key 后再刷新'];
     renderAiErrorBanner();
     return;
   }
+  await ensureAiIdle(); // 若自身有暂停中/进行中的旧一轮，先安全中止再开始新一轮
   aiIsLoading = true;
   aiIsPaused = false;
   aiPauseWaiters = [];
@@ -2960,6 +2992,7 @@ async function refreshAiCollabs() {
 
   for (const company of CONFIG.COMPANIES) {
     await waitIfAiPaused();
+    if (aiAbortRequested) break; // 被 ensureAiIdle() 请求中止（例如用户点了「清空并重新检索」）
     await processAiCollabBatch(company, lookbackDays);
   }
 
@@ -2984,9 +3017,10 @@ function updateAiRefreshButtonState(loading) {
 }
 
 // 清空当前已缓存的合作记录/深挖详情/检索诊断后再触发一次完整重新检索，逻辑同 handleBdClearAndRefresh
-function handleAiClearAndRefresh() {
-  if (aiIsLoading || isLoading || bdIsLoading) return;
+async function handleAiClearAndRefresh() {
+  if (isLoading || (bdIsLoading && !bdIsPaused)) return;
   if (!confirm('确定要清空当前已缓存的 AI 合作记录并重新检索吗？此操作不可撤销。')) return;
+  await ensureAiIdle();
   aiCollabCacheData = null;
   aiCollabDetailCache = {};
   aiSearchDiagnostics = null;
