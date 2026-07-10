@@ -3245,12 +3245,9 @@ function findBdRecordLocation(dealId) {
 async function handleBdBackcheck(dealId) {
   if (bdBackcheckLoadingId) return;
   if (!ensureLlmApiKeyForSection('bd')) return;
-  const dealsList = bdCacheData?.deals || [];
-  const leadsList = bdCacheData?.leads_for_review || [];
-  let idx = dealsList.findIndex(d => d.deal_id === dealId);
-  let list = idx !== -1 ? dealsList : null;
-  if (idx === -1) { idx = leadsList.findIndex(d => d.deal_id === dealId); list = idx !== -1 ? leadsList : null; }
-  if (!list) return;
+  const loc = findBdRecordLocation(dealId);
+  if (!loc) return;
+  const { list, idx } = loc;
   if (!hasConfiguredSearchApiKey()) {
     bdErrorMessages = [MISSING_SEARCH_API_KEY_FOR_BACKCHECK_MESSAGE];
     renderBdErrorBanner();
@@ -3696,10 +3693,13 @@ function bdNoMatchHtml() {
 function bdLeadCardHtml(lead) {
   const hasSourceUrl = hasRealSourceUrl(lead);
   const dateText = isKnownDateString(lead.event_date) ? lead.event_date : '事件日期待核验';
+  const needsBackcheck = lead.source_tier === 'T2' || lead.source_tier === 'Unknown';
+  const isBackchecking = bdBackcheckLoadingId === lead.deal_id;
   return `
     <div class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20 p-3">
       <div class="flex items-center gap-2 flex-wrap text-xs">
         <span class="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">待核验：${escapeHtml(lead.reason_for_review || '需要核验首次宣布日期')}</span>
+        <span class="px-2 py-0.5 rounded-full font-medium ${sourceTierCls(lead.source_tier)}">${sourceTierLabel(lead.source_tier)}</span>
         <span class="text-slate-400">event_date：${escapeHtml(dateText)}</span>
         ${lead.source_published_date && lead.source_published_date !== 'N/A' ? `<span class="text-slate-400">source_published_date：${escapeHtml(lead.source_published_date)}</span>` : ''}
       </div>
@@ -3708,6 +3708,16 @@ function bdLeadCardHtml(lead) {
       ${lead.date_basis && lead.date_basis !== 'N/A' ? `<div class="text-xs text-slate-400 mt-1">日期依据：${escapeHtml(lead.date_basis)}</div>` : ''}
       ${lead.extraction_basis && lead.extraction_basis !== 'N/A' ? `<div class="text-xs text-slate-400 mt-1">判断依据：${escapeHtml(lead.extraction_basis)}</div>` : ''}
       ${hasSourceUrl ? `<a href="${escapeHtml(lead.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(lead.source_url)}</a>` : ''}
+      ${lead.source_origin === 'official_backcheck' ? '<div class="text-xs text-emerald-600 dark:text-emerald-400 mt-1">✅ 已根据 T2 线索反查到官方/准官方来源。</div>' : ''}
+      ${lead.manual_verified ? `<div class="text-xs text-sky-600 dark:text-sky-400 mt-1">🖊 人工已核实（${formatDateTime(lead.manual_verified_at)}）｜确认日期：${escapeHtml(lead.confirmed_event_date || 'N/A')}（${escapeHtml(lead.confirmed_event_date_basis || 'N/A')}）${lead.manual_verified_note ? '｜备注：' + escapeHtml(lead.manual_verified_note) : ''}</div>` : ''}
+      ${needsBackcheck ? `
+        ${lead.backcheck_last_result === 'not_found' ? `<div class="text-xs text-slate-400 mt-1">🔎 已反查（${formatDateTime(lead.backcheck_last_at)}）：未找到官方/准官方来源，仍为二级线索。</div>` : ''}
+        ${lead.backcheck_last_result === 'error' ? `<div class="text-xs text-rose-500 mt-1">🔎 反查失败（${formatDateTime(lead.backcheck_last_at)}）：${escapeHtml(lead.backcheck_last_error || '')}</div>` : ''}
+        <div class="mt-1 flex flex-wrap gap-2">
+          <button data-bd-backcheck="${escapeHtml(lead.deal_id)}" ${isBackchecking ? 'disabled' : ''} class="text-xs px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 font-medium disabled:opacity-50">${isBackchecking ? '⏳ 反查中…' : '🔎 反查官方来源'}</button>
+          <button data-bd-manual-review="${escapeHtml(lead.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-sky-300 dark:border-sky-600 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-900/30 font-medium">🖊 人工审核</button>
+        </div>
+      ` : ''}
     </div>`;
 }
 
@@ -4454,19 +4464,32 @@ function ensureAiDiagnosticsForBackcheck() {
   return aiCollabCacheData.search_diagnostics;
 }
 
+// 在"正式列表"(collaborations) 和"待核验线索"(leads_for_review) 两个桶里查找同一条合作记录，逻辑同 findBdRecordLocation
+function findAiRecordLocation(collabId) {
+  const listA = aiCollabCacheData?.collaborations || [];
+  let idx = listA.findIndex(c => c.deal_id === collabId);
+  if (idx !== -1) return { list: listA, idx };
+  const listB = aiCollabCacheData?.leads_for_review || [];
+  idx = listB.findIndex(c => c.deal_id === collabId);
+  if (idx !== -1) return { list: listB, idx };
+  return null;
+}
+
 async function handleAiBackcheck(collabId) {
   if (aiBackcheckLoadingId) return;
   if (!ensureLlmApiKeyForSection('ai')) return;
-  const idx = (aiCollabCacheData?.collaborations || []).findIndex(c => c.deal_id === collabId);
-  if (idx === -1) return;
+  const loc = findAiRecordLocation(collabId);
+  if (!loc) return;
+  const { list, idx } = loc;
   if (!hasConfiguredSearchApiKey()) {
     aiErrorMessages = [MISSING_SEARCH_API_KEY_FOR_BACKCHECK_MESSAGE];
     renderAiErrorBanner();
     return;
   }
-  const collab = aiCollabCacheData.collaborations[idx];
+  const collab = list[idx];
   aiBackcheckLoadingId = collabId;
   renderAiCollabCards();
+  renderAiLeadsForReview();
 
   const diag = ensureAiDiagnosticsForBackcheck();
   diag.backcheckStats.t2Leads += 1;
@@ -4481,7 +4504,7 @@ async function handleAiBackcheck(collabId) {
         type: CONFIG.AI_SOURCE_TYPES.includes(parsed.source_type) ? parsed.source_type : (tier === 'T1' ? '公司公告' : '官方社媒'),
         tier,
       };
-      aiCollabCacheData.collaborations[idx] = {
+      list[idx] = {
         ...collab,
         source_url: upgradedSource.url,
         source_type: upgradedSource.type,
@@ -4492,14 +4515,14 @@ async function handleAiBackcheck(collabId) {
       };
       diag.originStats.official_backcheck += 1;
       if (tier === 'T1') diag.backcheckStats.upgradedToT1 += 1; else diag.backcheckStats.upgradedToT15 += 1;
-      aiCollabCacheData.collaborations[idx].backcheck_last_result = 'upgraded';
-      aiCollabCacheData.collaborations[idx].backcheck_last_at = new Date().toISOString();
-      aiCollabCacheData.collaborations[idx].backcheck_last_error = null;
+      list[idx].backcheck_last_result = 'upgraded';
+      list[idx].backcheck_last_at = new Date().toISOString();
+      list[idx].backcheck_last_error = null;
     } else {
       diag.backcheckStats.stillT2 += 1;
       const missing = new Set(collab.missing_info || []);
       missing.add('缺少官方来源');
-      aiCollabCacheData.collaborations[idx] = {
+      list[idx] = {
         ...collab, missing_info: [...missing],
         backcheck_last_result: 'not_found', backcheck_last_at: new Date().toISOString(), backcheck_last_error: null,
       };
@@ -4507,8 +4530,8 @@ async function handleAiBackcheck(collabId) {
   } catch (err) {
     diag.backcheckStats.failedBackcheck += 1;
     aiErrorMessages.push(`反查官方来源失败：${err.message}`);
-    aiCollabCacheData.collaborations[idx] = {
-      ...aiCollabCacheData.collaborations[idx],
+    list[idx] = {
+      ...list[idx],
       backcheck_last_result: 'error', backcheck_last_at: new Date().toISOString(), backcheck_last_error: err.message,
     };
   }
@@ -4516,12 +4539,14 @@ async function handleAiBackcheck(collabId) {
   aiBackcheckLoadingId = null;
   renderAiErrorBanner();
   renderAiCollabCards();
+  renderAiLeadsForReview();
   renderAiDiagnosticsPanel();
 }
 
-// 当前仍待核验（T2/Unknown）的合作列表，供批量反查使用，也用于按钮上显示计数
+// 当前仍待核验（T2/Unknown）的合作列表，供批量反查使用，也用于按钮上显示计数；正式列表和待核验线索一视同仁
 function getAiBackcheckTargets() {
-  return (aiCollabCacheData?.collaborations || []).filter(c => c.source_tier === 'T2' || c.source_tier === 'Unknown');
+  const needsBackcheck = c => c.source_tier === 'T2' || c.source_tier === 'Unknown';
+  return [...(aiCollabCacheData?.collaborations || []).filter(needsBackcheck), ...(aiCollabCacheData?.leads_for_review || []).filter(needsBackcheck)];
 }
 
 // 批量反查：逐条 await 复用 handleAiBackcheck()，不并发，逻辑同 handleBdBatchBackcheck
@@ -4539,7 +4564,8 @@ async function handleAiBatchBackcheck() {
   aiBatchBackcheckProgress = { current: 0, total: targets.length };
   updateAiBatchBackcheckButtonState();
   for (const collab of targets) {
-    const latest = (aiCollabCacheData?.collaborations || []).find(c => c.deal_id === collab.deal_id);
+    const loc = findAiRecordLocation(collab.deal_id);
+    const latest = loc ? loc.list[loc.idx] : null;
     if (latest && (latest.source_tier === 'T2' || latest.source_tier === 'Unknown')) {
       await handleAiBackcheck(collab.deal_id);
     }
@@ -4569,10 +4595,13 @@ function updateAiBatchBackcheckButtonState() {
 // ② 无法直接判断 -> 复用已有的 handleBdBackcheck()/handleAiBackcheck()，不重新实现反查本身
 let manualReviewTarget = null; // { type: 'bd' | 'ai', id: string } | null
 
+// 人工审核也要覆盖"待核验线索"桶，跟反查是同一套逻辑（见 findBdRecordLocation/findAiRecordLocation）
 function findManualReviewRecord() {
   if (!manualReviewTarget) return null;
-  if (manualReviewTarget.type === 'bd') return (bdCacheData?.deals || []).find(d => d.deal_id === manualReviewTarget.id) || null;
-  return (aiCollabCacheData?.collaborations || []).find(c => c.deal_id === manualReviewTarget.id) || null;
+  const loc = manualReviewTarget.type === 'bd'
+    ? findBdRecordLocation(manualReviewTarget.id)
+    : findAiRecordLocation(manualReviewTarget.id);
+  return loc ? loc.list[loc.idx] : null;
 }
 
 function openManualReviewModal(type, id) {
@@ -4614,9 +4643,11 @@ function handleManualReviewConfirm() {
   if (manualReviewTarget.type === 'bd') {
     saveBdCacheToStorage(bdCacheData);
     renderBdDealList();
+    renderBdLeadsForReview();
   } else {
     saveAiCollabCacheToStorage(aiCollabCacheData);
     renderAiCollabCards();
+    renderAiLeadsForReview();
   }
   closeManualReviewModal();
 }
@@ -4872,10 +4903,13 @@ function aiNoMatchHtml() {
 function aiLeadCardHtml(lead) {
   const hasSourceUrl = hasRealSourceUrl(lead);
   const dateText = isKnownDateString(lead.event_date) ? lead.event_date : '事件日期待核验';
+  const needsBackcheck = lead.source_tier === 'T2' || lead.source_tier === 'Unknown';
+  const isBackchecking = aiBackcheckLoadingId === lead.deal_id;
   return `
     <div class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20 p-3">
       <div class="flex items-center gap-2 flex-wrap text-xs">
         <span class="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">待核验：${escapeHtml(lead.reason_for_review || '需要核验首次宣布日期')}</span>
+        <span class="px-2 py-0.5 rounded-full font-medium ${sourceTierCls(lead.source_tier)}">${sourceTierLabel(lead.source_tier)}</span>
         <span class="text-slate-400">event_date：${escapeHtml(dateText)}</span>
         ${lead.source_published_date && lead.source_published_date !== 'N/A' ? `<span class="text-slate-400">source_published_date：${escapeHtml(lead.source_published_date)}</span>` : ''}
       </div>
@@ -4884,6 +4918,16 @@ function aiLeadCardHtml(lead) {
       ${lead.date_basis && lead.date_basis !== 'N/A' ? `<div class="text-xs text-slate-400 mt-1">日期依据：${escapeHtml(lead.date_basis)}</div>` : ''}
       ${lead.extraction_basis && lead.extraction_basis !== 'N/A' ? `<div class="text-xs text-slate-400 mt-1">判断依据：${escapeHtml(lead.extraction_basis)}</div>` : ''}
       ${hasSourceUrl ? `<a href="${escapeHtml(lead.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(lead.source_url)}</a>` : ''}
+      ${lead.source_origin === 'official_backcheck' ? '<div class="text-xs text-emerald-600 dark:text-emerald-400 mt-1">✅ 已根据 T2 线索反查到官方/准官方来源。</div>' : ''}
+      ${lead.manual_verified ? `<div class="text-xs text-sky-600 dark:text-sky-400 mt-1">🖊 人工已核实（${formatDateTime(lead.manual_verified_at)}）｜确认日期：${escapeHtml(lead.confirmed_event_date || 'N/A')}（${escapeHtml(lead.confirmed_event_date_basis || 'N/A')}）${lead.manual_verified_note ? '｜备注：' + escapeHtml(lead.manual_verified_note) : ''}</div>` : ''}
+      ${needsBackcheck ? `
+        ${lead.backcheck_last_result === 'not_found' ? `<div class="text-xs text-slate-400 mt-1">🔎 已反查（${formatDateTime(lead.backcheck_last_at)}）：未找到官方/准官方来源，仍为二级线索。</div>` : ''}
+        ${lead.backcheck_last_result === 'error' ? `<div class="text-xs text-rose-500 mt-1">🔎 反查失败（${formatDateTime(lead.backcheck_last_at)}）：${escapeHtml(lead.backcheck_last_error || '')}</div>` : ''}
+        <div class="mt-1 flex flex-wrap gap-2">
+          <button data-ai-backcheck="${escapeHtml(lead.deal_id)}" ${isBackchecking ? 'disabled' : ''} class="text-xs px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 font-medium disabled:opacity-50">${isBackchecking ? '⏳ 反查中…' : '🔎 反查官方来源'}</button>
+          <button data-ai-manual-review="${escapeHtml(lead.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-sky-300 dark:border-sky-600 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-900/30 font-medium">🖊 人工审核</button>
+        </div>
+      ` : ''}
     </div>`;
 }
 
@@ -5844,6 +5888,12 @@ function init() {
     const manualReviewBtn = e.target.closest('[data-bd-manual-review]');
     if (manualReviewBtn) openManualReviewModal('bd', manualReviewBtn.dataset.bdManualReview);
   });
+  document.getElementById('bdLeadsForReview').addEventListener('click', (e) => {
+    const backcheckBtn = e.target.closest('[data-bd-backcheck]');
+    if (backcheckBtn) { handleBdBackcheck(backcheckBtn.dataset.bdBackcheck); return; }
+    const manualReviewBtn = e.target.closest('[data-bd-manual-review]');
+    if (manualReviewBtn) openManualReviewModal('bd', manualReviewBtn.dataset.bdManualReview);
+  });
 
   // AI合作板块：页面加载时只读缓存展示，不自动调用 LLM
   aiCollabCacheData = loadAiCollabCache();
@@ -5875,6 +5925,12 @@ function init() {
     if (reanalyzeBtn) { handleAiDeepDive(reanalyzeBtn.dataset.aiReanalyze, true); return; }
     const deepDiveBtn = e.target.closest('[data-ai-deep-dive]');
     if (deepDiveBtn) { handleAiDeepDive(deepDiveBtn.dataset.aiDeepDive, false); return; }
+    const backcheckBtn = e.target.closest('[data-ai-backcheck]');
+    if (backcheckBtn) { handleAiBackcheck(backcheckBtn.dataset.aiBackcheck); return; }
+    const manualReviewBtn = e.target.closest('[data-ai-manual-review]');
+    if (manualReviewBtn) openManualReviewModal('ai', manualReviewBtn.dataset.aiManualReview);
+  });
+  document.getElementById('aiLeadsForReview').addEventListener('click', (e) => {
     const backcheckBtn = e.target.closest('[data-ai-backcheck]');
     if (backcheckBtn) { handleAiBackcheck(backcheckBtn.dataset.aiBackcheck); return; }
     const manualReviewBtn = e.target.closest('[data-ai-manual-review]');
