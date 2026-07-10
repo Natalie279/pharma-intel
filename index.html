@@ -2266,12 +2266,13 @@ function updateBdRefreshButtonState(loading) {
   syncRefreshButtonsDisabled();
 }
 
-// 清空当前已缓存的交易/深挖详情/检索诊断后再触发一次完整重新检索；与「🔄 刷新交易」的增量合并不同，
+// 只清空当前已缓存的交易/深挖详情/检索诊断，不自动触发重新检索；与「🔄 刷新交易」的增量合并不同，
 // 这里会先丢弃旧记录，避免旧格式字段、误判交易或过期数据在合并中一直残留。
-// 若 BD 自身正处于暂停中，ensureBdIdle() 会先安全中止旧一轮（不会因为"暂停中"就点不动）
-async function handleBdClearAndRefresh() {
+// 清空后不立刻搜索，是特意留出一个时间点让用户调整搜索范围/公司范围等设置，再手动点「🔄 刷新交易」。
+// 若 BD 自身正处于暂停中/进行中，ensureBdIdle() 会先安全中止旧一轮，避免清空和旧循环的写入互相打架
+async function handleBdClear() {
   if (isLoading || (aiIsLoading && !aiIsPaused)) return;
-  if (!confirm('确定要清空当前已缓存的 BD 交易记录并重新检索吗？此操作不可撤销。')) return;
+  if (!confirm('确定要清空当前已缓存的 BD 交易记录吗？此操作不可撤销。清空后可以先调整搜索范围/公司范围，再手动点击「🔄 刷新交易」重新检索。')) return;
   await ensureBdIdle();
   bdCacheData = null;
   bdDetailCache = {};
@@ -2280,10 +2281,14 @@ async function handleBdClearAndRefresh() {
   bdBackcheckLoadingId = null;
   localStorage.removeItem(CONFIG.BD_CACHE_KEY);
   saveBdDetailCacheToStorage(bdDetailCache);
-  // 清空后必须是全量重新检索，不受公司范围下拉框影响，否则会出现"清空了全部数据但只查了一家"的半吊子状态
-  const scopeSelect = document.getElementById('bdCompanyScopeSelect');
-  if (scopeSelect) scopeSelect.value = 'all';
-  refreshBdDeals();
+  renderBdErrorBanner();
+  renderBdToolbar();
+  populateBdCompanyFilter();
+  populateBdTypeFilter();
+  populateBdEvidenceFilter();
+  populateBdSourceTypeFilter();
+  populateBdSourceTierFilter();
+  renderBdDealList();
 }
 
 // ==================== BD & 并购：第二级 - 深挖分析 ====================
