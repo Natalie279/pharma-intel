@@ -148,14 +148,15 @@
       <select id="bdTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="all">全部类型</option>
       </select>
-      <select id="bdEvidenceFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
-        <option value="all">全部证据等级</option>
+      <select id="bdSortSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5" title="按可信度、重要性和事件日期排序">
+        <option value="priority">排序：可信度与重要性</option>
+        <option value="date">排序：事件日期</option>
+        <option value="evidence">排序：证据可信度</option>
       </select>
-      <select id="bdSourceTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
-        <option value="all">全部来源类型</option>
-      </select>
-      <select id="bdSourceTierFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
-        <option value="all">全部信源等级</option>
+      <select id="bdGroupSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5" title="按可信度分组展示">
+        <option value="none">分组：不分组</option>
+        <option value="source_tier">分组：按信源等级</option>
+        <option value="evidence">分组：按证据等级</option>
       </select>
     </div>
   </div>
@@ -215,14 +216,15 @@
       <select id="aiDirectionFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="all">全部方向</option>
       </select>
-      <select id="aiEvidenceFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
-        <option value="all">全部证据等级</option>
+      <select id="aiSortSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5" title="按可信度、重要性和事件日期排序">
+        <option value="priority">排序：可信度与重要性</option>
+        <option value="date">排序：事件日期</option>
+        <option value="evidence">排序：证据可信度</option>
       </select>
-      <select id="aiSourceTypeFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
-        <option value="all">全部来源类型</option>
-      </select>
-      <select id="aiSourceTierFilter" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
-        <option value="all">全部信源等级</option>
+      <select id="aiGroupSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5" title="按可信度分组展示">
+        <option value="none">分组：不分组</option>
+        <option value="source_tier">分组：按信源等级</option>
+        <option value="evidence">分组：按证据等级</option>
       </select>
     </div>
   </div>
@@ -720,9 +722,8 @@ let bdDetailCache = {};         // { [deal_id]: 深挖分析结果 }
 let bdErrorMessages = [];
 let bdFilterCompany = 'all';
 let bdFilterType = 'all';
-let bdFilterEvidenceLevel = 'all';
-let bdFilterSourceType = 'all';
-let bdFilterSourceTier = 'all';
+let bdSortMode = 'priority';
+let bdGroupMode = 'none';
 let bdIsLoading = false;
 let expandedDealId = null;      // 当前展开深挖详情的交易 id
 let bdLoadingDetailId = null;   // 正在请求深挖分析的交易 id
@@ -741,9 +742,8 @@ let aiCollabDetailCache = {};   // { [dedupeKey]: { updatedAt, detail } }
 let aiErrorMessages = [];
 let aiFilterCompany = 'all';
 let aiFilterDirection = 'all';
-let aiFilterEvidenceLevel = 'all';
-let aiFilterSourceType = 'all';
-let aiFilterSourceTier = 'all';
+let aiSortMode = 'priority';
+let aiGroupMode = 'none';
 let aiIsLoading = false;
 let expandedAiCollabId = null;  // 当前展开深挖详情的合作 dedupeKey
 let aiLoadingDetailId = null;   // 正在请求深挖分析的合作 dedupeKey
@@ -2821,9 +2821,6 @@ async function processBdBatch(batch, previousDeals, newlyFetchedDeals, lookbackD
   renderBdToolbar();
   populateBdCompanyFilter();
   populateBdTypeFilter();
-  populateBdEvidenceFilter();
-  populateBdSourceTypeFilter();
-  populateBdSourceTierFilter();
   renderBdDealList();
   renderBdDiagnosticsPanel();
 }
@@ -2920,9 +2917,6 @@ async function handleBdClear() {
   renderBdToolbar();
   populateBdCompanyFilter();
   populateBdTypeFilter();
-  populateBdEvidenceFilter();
-  populateBdSourceTypeFilter();
-  populateBdSourceTierFilter();
   renderBdDealList();
 }
 
@@ -3256,8 +3250,6 @@ async function handlePasteParseSubmit() {
     renderBdToolbar();
     populateBdCompanyFilter();
     populateBdTypeFilter();
-    populateBdEvidenceFilter();
-    populateBdSourceTypeFilter();
     renderBdDealList();
     setTimeout(closeBdPasteModal, 1500);
   } catch (err) {
@@ -3315,14 +3307,63 @@ function sourceTierLabel(tier) {
   return 'Unknown · 来源不足';
 }
 
+function evidenceRank(level) {
+  return level === '高' ? 3 : level === '中' ? 2 : level === '低' ? 1 : 0;
+}
+
+function sourceTierRank(tier) {
+  return tier === 'T1' ? 4 : tier === 'T1.5' ? 3 : tier === 'T2' ? 2 : 1;
+}
+
+function eventDateRank(record) {
+  const value = record.event_date || record.date;
+  return isKnownDateString(value) ? new Date(value).getTime() : 0;
+}
+
+function recordImportanceRank(record, kind) {
+  const text = kind === 'bd'
+    ? `${record.deal_type || ''} ${record.total_value || ''}`
+    : `${record.direction || ''} ${record.headline || ''}`;
+  if (/(并购|收购|授权|License|option|扩大|里程碑|平台|模型|部署|联合开发|共同开发)/i.test(text)) return 3;
+  if (/(合作|战略|数据|AI|人工智能)/i.test(text)) return 2;
+  return 1;
+}
+
+function sortIntelRecords(records, mode, kind) {
+  return [...records].sort((a, b) => {
+    if (mode === 'date') return eventDateRank(b) - eventDateRank(a);
+    if (mode === 'evidence') {
+      return sourceTierRank(b.source_tier) - sourceTierRank(a.source_tier)
+        || evidenceRank(b.evidence_level) - evidenceRank(a.evidence_level)
+        || eventDateRank(b) - eventDateRank(a);
+    }
+    return (sourceTierRank(b.source_tier) - sourceTierRank(a.source_tier)) * 100
+      + (evidenceRank(b.evidence_level) - evidenceRank(a.evidence_level)) * 10
+      + recordImportanceRank(b, kind) - recordImportanceRank(a, kind)
+      || eventDateRank(b) - eventDateRank(a);
+  });
+}
+
+function groupedIntelHtml(records, groupMode, kind, cardRenderer) {
+  if (groupMode === 'none') return records.map(cardRenderer).join('');
+  const groups = new Map();
+  for (const record of records) {
+    const key = groupMode === 'evidence' ? (record.evidence_level || '未知') : (record.source_tier || 'Unknown');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(record);
+  }
+  return [...groups.entries()].map(([key, items]) => `
+    <section class="space-y-2">
+      <h3 class="text-sm font-semibold text-slate-500 dark:text-slate-400">${escapeHtml(groupMode === 'evidence' ? `证据等级：${key}` : `信源等级：${sourceTierLabel(key)}`)} <span class="font-normal">（${items.length}）</span></h3>
+      <div class="space-y-3">${items.map(cardRenderer).join('')}</div>
+    </section>`).join('');
+}
+
 function getFilteredBdDeals() {
   let list = bdCacheData?.deals || [];
   if (bdFilterCompany !== 'all') list = list.filter(d => d.pharma === bdFilterCompany);
   if (bdFilterType !== 'all') list = list.filter(d => d.deal_type === bdFilterType);
-  if (bdFilterEvidenceLevel !== 'all') list = list.filter(d => d.evidence_level === bdFilterEvidenceLevel);
-  if (bdFilterSourceType !== 'all') list = list.filter(d => d.source_type === bdFilterSourceType);
-  if (bdFilterSourceTier !== 'all') list = list.filter(d => d.source_tier === bdFilterSourceTier);
-  return list;
+  return sortIntelRecords(list, bdSortMode, 'bd');
 }
 
 function dealDetailBlockHtml(dealId) {
@@ -3511,7 +3552,7 @@ function renderBdDealList() {
   if (!bdCacheData) { container.innerHTML = bdEmptyStateHtml(); return; }
   const list = getFilteredBdDeals();
   if (!list.length) { container.innerHTML = bdNoMatchHtml(); return; }
-  container.innerHTML = list.map(dealCardHtml).join('');
+  container.innerHTML = groupedIntelHtml(list, bdGroupMode, 'bd', dealCardHtml);
 }
 
 function renderBdErrorBanner() {
@@ -3598,33 +3639,6 @@ function populateBdTypeFilter() {
   select.innerHTML = '<option value="all">全部类型</option>' +
     CONFIG.BD_DEAL_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('') +
     extraOptionsHtml;
-  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
-}
-
-function populateBdEvidenceFilter() {
-  const select = document.getElementById('bdEvidenceFilter');
-  if (!select) return;
-  const currentValue = select.value;
-  select.innerHTML = '<option value="all">全部证据等级</option>' +
-    CONFIG.AI_EVIDENCE_LEVELS.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
-  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
-}
-
-function populateBdSourceTypeFilter() {
-  const select = document.getElementById('bdSourceTypeFilter');
-  if (!select) return;
-  const currentValue = select.value;
-  select.innerHTML = '<option value="all">全部来源类型</option>' +
-    CONFIG.BD_SOURCE_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
-  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
-}
-
-function populateBdSourceTierFilter() {
-  const select = document.getElementById('bdSourceTierFilter');
-  if (!select) return;
-  const currentValue = select.value;
-  select.innerHTML = '<option value="all">全部信源等级</option>' +
-    CONFIG.SOURCE_TIERS.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(sourceTierLabel(t))}</option>`).join('');
   if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
 }
 
@@ -4142,7 +4156,6 @@ async function refreshAiCollabs() {
   updateAiRefreshButtonState(false);
   renderAiSearchProgress();
   renderAiToolbar();
-  populateAiSourceTierFilter();
 }
 
 function updateAiRefreshButtonState(loading) {
@@ -4166,7 +4179,6 @@ async function handleAiClear() {
   renderAiErrorBanner();
   renderAiToolbar();
   populateAiFilters();
-  populateAiSourceTierFilter();
   renderAiCollabCards();
 }
 
@@ -4564,10 +4576,7 @@ function getFilteredAiCollabs() {
   let list = aiCollabCacheData?.collaborations || [];
   if (aiFilterCompany !== 'all') list = list.filter(c => c.pharma === aiFilterCompany);
   if (aiFilterDirection !== 'all') list = list.filter(c => c.direction === aiFilterDirection);
-  if (aiFilterEvidenceLevel !== 'all') list = list.filter(c => c.evidence_level === aiFilterEvidenceLevel);
-  if (aiFilterSourceType !== 'all') list = list.filter(c => c.source_type === aiFilterSourceType);
-  if (aiFilterSourceTier !== 'all') list = list.filter(c => c.source_tier === aiFilterSourceTier);
-  return list;
+  return sortIntelRecords(list, aiSortMode, 'ai');
 }
 
 function aiCollabDetailBlockHtml(collabId) {
@@ -4725,7 +4734,7 @@ function renderAiCollabCards() {
     container.innerHTML = aiIsLoading ? bdSkeletonHtml() : aiNoMatchHtml();
     return;
   }
-  container.innerHTML = list.map(aiCollabCardHtml).join('');
+  container.innerHTML = groupedIntelHtml(list, aiGroupMode, 'ai', aiCollabCardHtml);
 }
 
 function renderAiErrorBanner() {
@@ -4803,28 +4812,6 @@ function populateAiFilters() {
     CONFIG.AI_DIRECTIONS.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
   if ([...directionSelect.options].some(o => o.value === currentDirection)) directionSelect.value = currentDirection;
 
-  const evidenceSelect = document.getElementById('aiEvidenceFilter');
-  const currentEvidence = evidenceSelect.value;
-  evidenceSelect.innerHTML = '<option value="all">全部证据等级</option>' +
-    CONFIG.AI_EVIDENCE_LEVELS.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
-  if ([...evidenceSelect.options].some(o => o.value === currentEvidence)) evidenceSelect.value = currentEvidence;
-
-  const sourceTypeSelect = document.getElementById('aiSourceTypeFilter');
-  const currentSourceType = sourceTypeSelect.value;
-  sourceTypeSelect.innerHTML = '<option value="all">全部来源类型</option>' +
-    CONFIG.AI_SOURCE_TYPES.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
-  if ([...sourceTypeSelect.options].some(o => o.value === currentSourceType)) sourceTypeSelect.value = currentSourceType;
-
-  populateAiSourceTierFilter();
-}
-
-function populateAiSourceTierFilter() {
-  const select = document.getElementById('aiSourceTierFilter');
-  if (!select) return;
-  const currentValue = select.value;
-  select.innerHTML = '<option value="all">全部信源等级</option>' +
-    CONFIG.SOURCE_TIERS.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(sourceTierLabel(t))}</option>`).join('');
-  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
 }
 
 // ==================== 飞书推送：推送节奏与覆盖时间 ====================
@@ -5672,9 +5659,6 @@ function init() {
   populateBdCompanyFilter();
   populateBdCompanyScopeSelect();
   populateBdTypeFilter();
-  populateBdEvidenceFilter();
-  populateBdSourceTypeFilter();
-  populateBdSourceTierFilter();
   renderBdDealList();
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -5690,9 +5674,8 @@ function init() {
   document.getElementById('bdPasteParseSubmitBtn').addEventListener('click', handlePasteParseSubmit);
   document.getElementById('bdCompanyFilter').addEventListener('change', (e) => { bdFilterCompany = e.target.value; renderBdDealList(); });
   document.getElementById('bdTypeFilter').addEventListener('change', (e) => { bdFilterType = e.target.value; renderBdDealList(); });
-  document.getElementById('bdEvidenceFilter').addEventListener('change', (e) => { bdFilterEvidenceLevel = e.target.value; renderBdDealList(); });
-  document.getElementById('bdSourceTypeFilter').addEventListener('change', (e) => { bdFilterSourceType = e.target.value; renderBdDealList(); });
-  document.getElementById('bdSourceTierFilter').addEventListener('change', (e) => { bdFilterSourceTier = e.target.value; renderBdDealList(); });
+  document.getElementById('bdSortSelect').addEventListener('change', (e) => { bdSortMode = e.target.value; renderBdDealList(); });
+  document.getElementById('bdGroupSelect').addEventListener('change', (e) => { bdGroupMode = e.target.value; renderBdDealList(); });
   document.getElementById('bdDiagnosticsToggleBtn').addEventListener('click', toggleBdDiagnosticsPanel);
   document.getElementById('bdDealList').addEventListener('click', (e) => {
     const reanalyzeBtn = e.target.closest('[data-bd-reanalyze]');
@@ -5726,9 +5709,8 @@ function init() {
   document.getElementById('manualReviewBackcheckBtn').addEventListener('click', handleManualReviewBackcheck);
   document.getElementById('aiCompanyFilter').addEventListener('change', (e) => { aiFilterCompany = e.target.value; renderAiCollabCards(); });
   document.getElementById('aiDirectionFilter').addEventListener('change', (e) => { aiFilterDirection = e.target.value; renderAiCollabCards(); });
-  document.getElementById('aiEvidenceFilter').addEventListener('change', (e) => { aiFilterEvidenceLevel = e.target.value; renderAiCollabCards(); });
-  document.getElementById('aiSourceTypeFilter').addEventListener('change', (e) => { aiFilterSourceType = e.target.value; renderAiCollabCards(); });
-  document.getElementById('aiSourceTierFilter').addEventListener('change', (e) => { aiFilterSourceTier = e.target.value; renderAiCollabCards(); });
+  document.getElementById('aiSortSelect').addEventListener('change', (e) => { aiSortMode = e.target.value; renderAiCollabCards(); });
+  document.getElementById('aiGroupSelect').addEventListener('change', (e) => { aiGroupMode = e.target.value; renderAiCollabCards(); });
   document.getElementById('aiDiagnosticsToggleBtn').addEventListener('click', toggleAiDiagnosticsPanel);
   document.getElementById('aiCollabGrid').addEventListener('click', (e) => {
     const reanalyzeBtn = e.target.closest('[data-ai-reanalyze]');
