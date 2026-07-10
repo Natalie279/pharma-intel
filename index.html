@@ -139,10 +139,11 @@
       <button id="bdClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空</button>
       <select id="bdLookbackModeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="auto">搜索范围：自动</option>
+        <option value="2">过去 2 天</option>
+        <option value="3">过去 3 天</option>
         <option value="7">过去 7 天</option>
         <option value="14">过去 14 天</option>
         <option value="30">过去 30 天</option>
-        <option value="90">过去 90 天</option>
       </select>
       <select id="bdCompanyScopeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="all">公司范围：全部</option>
@@ -215,10 +216,11 @@
       <button id="aiClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空</button>
       <select id="aiLookbackModeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="auto">搜索范围：自动</option>
+        <option value="2">过去 2 天</option>
+        <option value="3">过去 3 天</option>
         <option value="7">过去 7 天</option>
         <option value="14">过去 14 天</option>
         <option value="30">过去 30 天</option>
-        <option value="90">过去 90 天</option>
       </select>
       <select id="aiCompanyScopeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="all">公司范围：全部</option>
@@ -628,13 +630,15 @@ const CONFIG = {
   SOURCE_TIER_PRIORITY: ['T1', 'T1.5', 'T2', 'Unknown'],
   REVIEW_STATUSES: ['已由官方来源确认', '准官方来源确认', '仅T2线索待核验', '来源不足', '手动导入待核验', '人工已核实'],
   SOURCE_ORIGINS: ['primary_search', 't2_lead', 'manual_import', 'official_backcheck', 'official_social', 'founder_social', 'kol_social'],
-  // 手动搜索范围覆盖选项（days=null 表示自动/自适应）
+  // 手动搜索范围覆盖选项（days=null 表示自动/自适应）；隔日/每几天刷新一次的场景下 90 天太宽，
+  // 去掉 90 天改成更贴近实际刷新节奏的 2/3 天档位
   LOOKBACK_OVERRIDE_OPTIONS: [
     { value: 'auto', days: null, label: '搜索范围：自动' },
+    { value: '2', days: 2, label: '过去 2 天' },
+    { value: '3', days: 3, label: '过去 3 天' },
     { value: '7', days: 7, label: '过去 7 天' },
     { value: '14', days: 14, label: '过去 14 天' },
     { value: '30', days: 30, label: '过去 30 天' },
-    { value: '90', days: 90, label: '过去 90 天' },
   ],
   CACHE_WARN_DAYS: 3,
   DEFAULT_BASE_URL: 'https://api.openai.com/v1',
