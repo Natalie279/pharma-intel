@@ -96,7 +96,7 @@
       <span id="bdLastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
       <span id="bdLookbackText" class="text-xs text-slate-400"></span>
       <button id="bdRefreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新交易</button>
-      <button id="bdClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空并重新检索</button>
+      <button id="bdClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空</button>
       <select id="bdLookbackModeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="auto">搜索范围：自动</option>
         <option value="7">过去 7 天</option>
@@ -163,7 +163,7 @@
       <span id="aiLastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
       <span id="aiLookbackText" class="text-xs text-slate-400"></span>
       <button id="aiRefreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新 AI 合作</button>
-      <button id="aiClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空并重新检索</button>
+      <button id="aiClearRefreshBtn" class="px-4 py-2 rounded-lg border border-rose-300 dark:border-rose-600 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🗑 清空</button>
       <select id="aiLookbackModeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
         <option value="auto">搜索范围：自动</option>
         <option value="7">过去 7 天</option>
@@ -1229,7 +1229,7 @@ function updateRefreshButtonState(loading) {
 
 // 三个板块的刷新互斥：任一板块正在"活跃"加载（未暂停）时，禁用会与其抢占同一 API 配额的其他按钮。
 // 暂停中的板块不算"活跃"——此时没有请求在飞行，允许操作其他板块，也允许对暂停中的板块本身重新触发
-// （重新触发会先经 ensureBdIdle()/ensureAiIdle() 安全中止旧的暂停循环，见 handleBdClearAndRefresh 等）
+// （重新触发会先经 ensureBdIdle()/ensureAiIdle() 安全中止旧的暂停循环，见 handleBdClear/refreshBdDeals 等）
 function syncRefreshButtonsDisabled() {
   const bdBusy = (bdIsLoading && !bdIsPaused) || bdBatchBackcheckLoading;
   const aiBusy = (aiIsLoading && !aiIsPaused) || aiBatchBackcheckLoading;
@@ -2249,7 +2249,7 @@ async function refreshBdDeals() {
   const batches = chunkArray(bdCompaniesToSearch, CONFIG.BD_BATCH_SIZE);
   for (const batch of batches) {
     await waitIfBdPaused();
-    if (bdAbortRequested) break; // 被 ensureBdIdle() 请求中止（例如用户点了「清空并重新检索」）
+    if (bdAbortRequested) break; // 被 ensureBdIdle() 请求中止（例如用户点了「清空」或重新点了「刷新交易」）
     await processBdBatch(batch, previousDeals, newlyFetchedDeals, lookbackDays, lookbackMode);
   }
 
@@ -3427,7 +3427,7 @@ async function refreshAiCollabs() {
 
   for (const company of aiCompaniesToSearch) {
     await waitIfAiPaused();
-    if (aiAbortRequested) break; // 被 ensureAiIdle() 请求中止（例如用户点了「清空并重新检索」）
+    if (aiAbortRequested) break; // 被 ensureAiIdle() 请求中止（例如用户点了「清空」或重新点了「刷新 AI 合作」）
     await processAiCollabBatch(company, lookbackDays);
   }
 
@@ -3451,10 +3451,10 @@ function updateAiRefreshButtonState(loading) {
   syncRefreshButtonsDisabled();
 }
 
-// 清空当前已缓存的合作记录/深挖详情/检索诊断后再触发一次完整重新检索，逻辑同 handleBdClearAndRefresh
-async function handleAiClearAndRefresh() {
+// 只清空当前已缓存的合作记录/深挖详情/检索诊断，不自动触发重新检索，逻辑同 handleBdClear
+async function handleAiClear() {
   if (isLoading || (bdIsLoading && !bdIsPaused)) return;
-  if (!confirm('确定要清空当前已缓存的 AI 合作记录并重新检索吗？此操作不可撤销。')) return;
+  if (!confirm('确定要清空当前已缓存的 AI 合作记录吗？此操作不可撤销。清空后可以先调整搜索范围/公司范围，再手动点击「🔄 刷新 AI 合作」重新检索。')) return;
   await ensureAiIdle();
   aiCollabCacheData = null;
   aiCollabDetailCache = {};
@@ -3463,10 +3463,11 @@ async function handleAiClearAndRefresh() {
   aiBackcheckLoadingId = null;
   localStorage.removeItem(CONFIG.AI_COLLAB_CACHE_KEY);
   saveAiCollabDetailCacheToStorage(aiCollabDetailCache);
-  // 清空后必须是全量重新检索，不受公司范围下拉框影响，否则会出现"清空了全部数据但只查了一家"的半吊子状态
-  const scopeSelect = document.getElementById('aiCompanyScopeSelect');
-  if (scopeSelect) scopeSelect.value = 'all';
-  refreshAiCollabs();
+  renderAiErrorBanner();
+  renderAiToolbar();
+  populateAiFilters();
+  populateAiSourceTierFilter();
+  renderAiCollabCards();
 }
 
 // ==================== AI合作：第二级 - 深挖分析 ====================
@@ -4808,7 +4809,7 @@ function init() {
   });
 
   document.getElementById('bdRefreshBtn').addEventListener('click', refreshBdDeals);
-  document.getElementById('bdClearRefreshBtn').addEventListener('click', handleBdClearAndRefresh);
+  document.getElementById('bdClearRefreshBtn').addEventListener('click', handleBdClear);
   document.getElementById('bdPauseResumeBtn').addEventListener('click', togglePauseBdSearch);
   document.getElementById('bdPasteParseBtn').addEventListener('click', openBdPasteModal);
   document.getElementById('bdBatchBackcheckBtn').addEventListener('click', handleBdBatchBackcheck);
@@ -4838,7 +4839,7 @@ function init() {
   renderAiCollabCards();
 
   document.getElementById('aiRefreshBtn').addEventListener('click', refreshAiCollabs);
-  document.getElementById('aiClearRefreshBtn').addEventListener('click', handleAiClearAndRefresh);
+  document.getElementById('aiClearRefreshBtn').addEventListener('click', handleAiClear);
   document.getElementById('aiPauseResumeBtn').addEventListener('click', togglePauseAiSearch);
   document.getElementById('aiPasteParseBtn').addEventListener('click', openAiPasteModal);
   document.getElementById('aiBatchBackcheckBtn').addEventListener('click', handleAiBatchBackcheck);
