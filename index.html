@@ -46,7 +46,7 @@
 
   <!-- 免责声明 -->
   <div class="mb-4 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 text-amber-800 dark:text-amber-200 text-sm">
-    ⚠️ 以下数据由 AI 基于其掌握的信息生成，可能存在延迟、近似或误差，仅供内部参考，请以各公司官方财报/公告为准。
+    ⚠️ 市值与财务数据可能来自市场数据 API、公司财报、公告、公开网页或 AI 辅助估算。市值等市场数据会随交易日变化，收入、利润和产品销售额以公司实际披露的财报周期为准。若字段标记为 AI估算或待核验，请以公司官方财报、公告或交易所披露为准。
   </div>
 
   <!-- 错误提示区 -->
@@ -55,15 +55,33 @@
   <!-- 异动汇总提示区 -->
   <div id="alertSummaryBanner" class="mb-4"></div>
 
-  <!-- 工具条：更新时间 / 刷新 / 分组 / 排序 / 异动筛选 -->
+  <!-- 工具条：更新时间 / 刷新 / 更新范围 / 公司范围 / 分组 / 筛选 / 排序 -->
   <div class="mb-4 flex flex-wrap items-center gap-3 justify-between">
     <div class="flex items-center gap-3 flex-wrap">
       <span id="lastUpdatedText" class="text-sm text-slate-500 dark:text-slate-400">尚未获取过数据</span>
       <span id="referenceDateText" class="text-xs text-slate-400"></span>
+      <span id="marketLookbackText" class="text-xs text-slate-400"></span>
       <button id="refreshBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">🔄 刷新数据</button>
+      <select id="marketLookbackModeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="auto">更新范围：自动</option>
+        <option value="2">过去 2 天</option>
+        <option value="7">过去 7 天</option>
+        <option value="14">过去 14 天</option>
+        <option value="30">过去 30 天</option>
+      </select>
+      <select id="marketCompanyScopeSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">公司范围：全部</option>
+      </select>
     </div>
     <div class="flex items-center gap-2 flex-wrap">
       <button id="alertFilterToggle" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-sm bg-white dark:bg-slate-800">🔔 异动筛选</button>
+      <select id="marketExtraFilterSelect" class="text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5">
+        <option value="all">全部公司</option>
+        <option value="alerts">仅异动</option>
+        <option value="watch_high">watch_priority = high</option>
+        <option value="quality_pending">data_quality = 待核验</option>
+        <option value="tier_unknown">source_tier = Unknown</option>
+      </select>
       <div id="groupFilterTabs" class="flex rounded-lg overflow-hidden border border-slate-300 dark:border-slate-600 text-sm">
         <button data-group="all" class="group-filter-btn px-3 py-1.5 bg-indigo-600 text-white">全部</button>
         <button data-group="mnc" class="group-filter-btn px-3 py-1.5 bg-white dark:bg-slate-800">国际MNC</button>
@@ -73,6 +91,9 @@
         <option value="default">默认顺序</option>
         <option value="desc">市值从高到低</option>
         <option value="asc">市值从低到高</option>
+        <option value="changeDesc">市值变化幅度从高到低</option>
+        <option value="changeAsc">跌幅从高到低</option>
+        <option value="watchPriority">watch_priority 优先</option>
       </select>
     </div>
   </div>
@@ -359,6 +380,14 @@
         <input id="alertMarketCapPctInput" type="number" min="0" step="0.5" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
       </div>
       <div>
+        <label class="block text-sm font-medium mb-1">收入同比变化阈值（%）</label>
+        <input id="alertRevenuePctInput" type="number" min="0" step="0.5" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">利润同比变化阈值（%）</label>
+        <input id="alertProfitPctInput" type="number" min="0" step="0.5" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+      </div>
+      <div>
         <label class="block text-sm font-medium mb-1">核心产品销售额变化阈值（%）</label>
         <input id="alertProductPctInput" type="number" min="0" step="0.5" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
       </div>
@@ -455,27 +484,30 @@
 const CONFIG = {
   // officialDomains 留空：国内几家公司的官网域名没有十足把握，写错了 site: 查询会静默返回空结果不易发现，
   // 宁可不填也不猜错；有需要可自行补充，AI合作板块的搜索逻辑对缺失该字段有兜底
+  // ticker/exchange/currency：仅在把握较高时填写，用于第二阶段接市场数据 API 时做查询键；
+  // 国内公司大多存在多地上市（A股/H股/ADR）的情况，单一 ticker 字段容易产生歧义，宁可留空也不乱填，
+  // 留空时市值板块按现有方式（AI估算/待核验）处理，不影响 Phase 1 功能
   COMPANIES: [
-    { name: 'Roche', group: 'mnc', aliases: ['罗氏'], officialDomains: [] },
-    { name: 'Pfizer', group: 'mnc', aliases: ['辉瑞'], officialDomains: [] },
-    { name: 'Novartis', group: 'mnc', aliases: ['诺华'], officialDomains: [] },
-    { name: 'AstraZeneca', group: 'mnc', aliases: ['阿斯利康'], officialDomains: [] },
-    { name: 'MSD', group: 'mnc', aliases: ['Merck', 'Merck & Co', 'Merck & Co.', 'Merck Sharp & Dohme', '默沙东'], officialDomains: [] },
-    { name: 'BMS', group: 'mnc', aliases: ['Bristol-Myers Squibb', 'Bristol Myers Squibb', '百时美施贵宝'], officialDomains: [] },
-    { name: 'J&J', group: 'mnc', aliases: ['Johnson & Johnson', 'Johnson and Johnson', '强生'], officialDomains: [] },
-    { name: 'Lilly', group: 'mnc', aliases: ['Eli Lilly', 'Eli Lilly and Company', '礼来'], officialDomains: [] },
-    { name: 'Sanofi', group: 'mnc', aliases: ['赛诺菲'], officialDomains: [] },
-    { name: 'AbbVie', group: 'mnc', aliases: ['艾伯维'], officialDomains: [] },
-    { name: 'GSK', group: 'mnc', aliases: ['GlaxoSmithKline', '葛兰素史克'], officialDomains: [] },
-    { name: 'Takeda', group: 'mnc', aliases: ['Takeda Pharmaceutical', '武田'], officialDomains: [] },
-    { name: '恒瑞医药', group: 'cn', aliases: ['Hengrui', 'Hengrui Medicine', 'Hengrui Pharmaceuticals', 'Jiangsu Hengrui Medicine', 'Jiangsu Hengrui Pharmaceutical'], officialDomains: [] },
-    { name: '百济神州', group: 'cn', aliases: ['BeiGene', 'BeiGene Ltd'], officialDomains: [] },
-    { name: '信达生物', group: 'cn', aliases: ['Innovent Biologics', 'Innovent'], officialDomains: [] },
-    { name: '君实生物', group: 'cn', aliases: ['Junshi Biosciences', 'Junshi Bio', 'TopAlliance Biosciences'], officialDomains: [] },
-    { name: '复星医药', group: 'cn', aliases: ['Fosun Pharma', 'Fosun Pharmaceutical', 'Shanghai Fosun Pharmaceutical'], officialDomains: [] },
-    { name: '先声药业', group: 'cn', aliases: ['Simcere Pharmaceutical', 'Simcere'], officialDomains: [] },
-    { name: '石药集团', group: 'cn', aliases: ['CSPC Pharmaceutical Group', 'CSPC Pharmaceutical', 'CSPC'], officialDomains: [] },
-    { name: '中国生物制药', group: 'cn', aliases: ['Sino Biopharmaceutical', 'Sino Biopharm'], officialDomains: [] },
+    { name: 'Roche', group: 'mnc', aliases: ['罗氏'], officialDomains: [], ticker: 'ROG', exchange: 'SIX', currency: 'CHF' },
+    { name: 'Pfizer', group: 'mnc', aliases: ['辉瑞'], officialDomains: [], ticker: 'PFE', exchange: 'NYSE', currency: 'USD' },
+    { name: 'Novartis', group: 'mnc', aliases: ['诺华'], officialDomains: [], ticker: 'NOVN', exchange: 'SIX', currency: 'CHF' },
+    { name: 'AstraZeneca', group: 'mnc', aliases: ['阿斯利康'], officialDomains: [], ticker: 'AZN', exchange: 'LSE', currency: 'GBP' },
+    { name: 'MSD', group: 'mnc', aliases: ['Merck', 'Merck & Co', 'Merck & Co.', 'Merck Sharp & Dohme', '默沙东'], officialDomains: [], ticker: 'MRK', exchange: 'NYSE', currency: 'USD' },
+    { name: 'BMS', group: 'mnc', aliases: ['Bristol-Myers Squibb', 'Bristol Myers Squibb', '百时美施贵宝'], officialDomains: [], ticker: 'BMY', exchange: 'NYSE', currency: 'USD' },
+    { name: 'J&J', group: 'mnc', aliases: ['Johnson & Johnson', 'Johnson and Johnson', '强生'], officialDomains: [], ticker: 'JNJ', exchange: 'NYSE', currency: 'USD' },
+    { name: 'Lilly', group: 'mnc', aliases: ['Eli Lilly', 'Eli Lilly and Company', '礼来'], officialDomains: [], ticker: 'LLY', exchange: 'NYSE', currency: 'USD' },
+    { name: 'Sanofi', group: 'mnc', aliases: ['赛诺菲'], officialDomains: [], ticker: 'SAN', exchange: 'EPA', currency: 'EUR' },
+    { name: 'AbbVie', group: 'mnc', aliases: ['艾伯维'], officialDomains: [], ticker: 'ABBV', exchange: 'NYSE', currency: 'USD' },
+    { name: 'GSK', group: 'mnc', aliases: ['GlaxoSmithKline', '葛兰素史克'], officialDomains: [], ticker: 'GSK', exchange: 'LSE', currency: 'GBP' },
+    { name: 'Takeda', group: 'mnc', aliases: ['Takeda Pharmaceutical', '武田'], officialDomains: [], ticker: '4502', exchange: 'TSE', currency: 'JPY' },
+    { name: '恒瑞医药', group: 'cn', aliases: ['Hengrui', 'Hengrui Medicine', 'Hengrui Pharmaceuticals', 'Jiangsu Hengrui Medicine', 'Jiangsu Hengrui Pharmaceutical'], officialDomains: [], ticker: '', exchange: '', currency: '' },
+    { name: '百济神州', group: 'cn', aliases: ['BeiGene', 'BeiGene Ltd'], officialDomains: [], ticker: '', exchange: '', currency: '' },
+    { name: '信达生物', group: 'cn', aliases: ['Innovent Biologics', 'Innovent'], officialDomains: [], ticker: '', exchange: '', currency: '' },
+    { name: '君实生物', group: 'cn', aliases: ['Junshi Biosciences', 'Junshi Bio', 'TopAlliance Biosciences'], officialDomains: [], ticker: '', exchange: '', currency: '' },
+    { name: '复星医药', group: 'cn', aliases: ['Fosun Pharma', 'Fosun Pharmaceutical', 'Shanghai Fosun Pharmaceutical'], officialDomains: [], ticker: '', exchange: '', currency: '' },
+    { name: '先声药业', group: 'cn', aliases: ['Simcere Pharmaceutical', 'Simcere'], officialDomains: [], ticker: '', exchange: '', currency: '' },
+    { name: '石药集团', group: 'cn', aliases: ['CSPC Pharmaceutical Group', 'CSPC Pharmaceutical', 'CSPC'], officialDomains: [], ticker: '', exchange: '', currency: '' },
+    { name: '中国生物制药', group: 'cn', aliases: ['Sino Biopharmaceutical', 'Sino Biopharm'], officialDomains: [], ticker: '', exchange: '', currency: '' },
   ],
   BATCH_SIZE: 4,
   REQUEST_TIMEOUT_MS: 240000,
@@ -561,13 +593,57 @@ const CONFIG = {
     { id: 'tavily', label: 'Tavily（为 LLM 检索场景设计）' },
   ],
   DEFAULT_SEARCH_PROVIDER: 'brave',
-  // 异动检测默认阈值
+  // 异动检测默认阈值：revenuePct/profitPct 是市值板块升级新增的，loadAlertRules() 对旧版 localStorage（缺这两个字段）做了兜底
   DEFAULT_ALERT_RULES: {
     marketCapPct: 5,
+    revenuePct: 10,
+    profitPct: 10,
     productSalesPct: 10,
-    riskKeywords: ['降级', '诉讼', '召回', '下调', '暂停', '警告'],
+    riskKeywords: ['降级', '诉讼', '召回', '下调', '暂停', '警告', 'FDA拒绝', 'clinical hold', 'warning letter', 'patent cliff', '失败', '终止'],
   },
+  // 旧版市值字段，保留兼容：仅 normalizeMarketRecord() 迁移旧缓存时可能用到，新流程一律走 MARKET_FIELDS
   FIELDS: ['company', 'display_name', 'market_cap', 'market_cap_trend', 'revenue', 'net_profit', 'top_products', 'key_pipeline', 'data_as_of', 'summary'],
+
+  // ==================== 市值与财务板块（升级版）====================
+  MARKET_BATCH_SIZE: 1, // 跟 BD/AI 一样每次只处理1家公司，可以逐家渲染+展示进度条，且单次请求足够小不易超时
+  MARKET_LOOKBACK_DEFAULT_DAYS: 7,
+  MARKET_LOOKBACK_MIN_DAYS: 2,
+  MARKET_LOOKBACK_MAX_DAYS: 30,
+  MARKET_LOOKBACK_BUFFER_DAYS: 1,
+  MARKET_LOOKBACK_OVERRIDE_OPTIONS: [
+    { value: 'auto', days: null, label: '更新范围：自动' },
+    { value: '2', days: 2, label: '过去 2 天' },
+    { value: '7', days: 7, label: '过去 7 天' },
+    { value: '14', days: 14, label: '过去 14 天' },
+    { value: '30', days: 30, label: '过去 30 天' },
+  ],
+  MARKET_SOURCE_TYPES: ['市场数据API', '公司财报', 'Investor Relations', '公司公告', '监管/交易所公告', '媒体报道', 'AI估算', '手动导入', '其他'],
+  // source_type -> source_tier 兜底映射，跟 BD_SOURCE_TYPE_TIER_MAP / AI_SOURCE_TYPE_TIER_MAP 同一套思路
+  MARKET_SOURCE_TYPE_TIER_MAP: {
+    '市场数据API': 'T1', '公司财报': 'T1', 'Investor Relations': 'T1', '公司公告': 'T1', '监管/交易所公告': 'T1',
+    '媒体报道': 'T2',
+    'AI估算': 'Unknown', '手动导入': 'Unknown', '其他': 'Unknown',
+  },
+  MARKET_CONFIDENCE_LEVELS: ['高', '中', '低'],
+  MARKET_DATA_QUALITY_LEVELS: ['高', '中', '低', '待核验'],
+  MARKET_WATCH_PRIORITIES: ['high', 'medium', 'low'],
+  MARKET_PIPELINE_PHASES: ['Discovery', 'Preclinical', 'Ph1', 'Ph2', 'Ph3', 'Filed', 'Approved', 'Commercial', 'N/A'],
+  // 管线"重大事件"关键词：命中即触发 pipeline 异动
+  MARKET_PIPELINE_EVENT_KEYWORDS: [
+    'approval', 'approved', 'filed', 'phase 3', 'ph3', 'failed', 'discontinued', 'clinical hold', 'fda', 'ema', 'nmpa',
+    '获批', '申报', '三期', '失败', '终止', '暂停',
+  ],
+  // 新版市值记录的标量字段清单（top_products/key_pipeline/data_sources 是对象数组，单独处理，不在这份列表里）
+  MARKET_FIELDS: [
+    'company', 'display_name', 'ticker', 'exchange', 'currency',
+    'market_cap', 'market_cap_previous', 'market_cap_change_abs', 'market_cap_change_pct', 'market_cap_trend', 'market_cap_as_of', 'market_cap_source',
+    'revenue', 'revenue_period', 'revenue_yoy', 'revenue_source',
+    'net_profit', 'profit_period', 'profit_yoy', 'profit_source',
+    'market_summary', 'change_explanation', 'watch_next', 'watch_priority',
+    'data_quality',
+  ],
+  // 沿用现有 CACHE_KEY/localStorage，不新增 MARKET_CACHE_KEY——旧记录由 normalizeMarketRecord() 在读取时原地升级到新结构，
+  // 这样"市值板块"依然是 cacheData.companies 这一份缓存，不产生第二份需要保持同步的数据源
   // ---- 飞书推送板块 ----
   PUSH_CACHE_KEY: 'pharma_intel_push_history',
   PUSH_MAX_ITEMS_DEFAULT: 10,
@@ -593,12 +669,14 @@ let cacheData = null;         // { updatedAt, referenceDate, companies: { [name]
 let alertRules = null;        // { marketCapPct, productSalesPct, riskKeywords }
 let companyAlerts = {};       // { [name]: [{type, label}] }，本次刷新后计算出的异动结果
 let alertFilterOnly = false;  // 是否只显示命中异动的公司
+let marketExtraFilter = 'all'; // 'all' | 'alerts' | 'watch_high' | 'quality_pending' | 'tier_unknown'
 let isFirstUse = false;
 let isLoading = false;
 let currentGroupFilter = 'all';
 let currentSort = 'default';
 let pendingCompanyKeys = new Set();
 let errorMessages = [];
+let expandedMarketCompany = null; // 当前展开详情的公司名（市值板块卡片，无需额外 LLM 调用，数据已在记录里）
 
 // ---- BD & 并购板块状态 ----
 let bdCacheData = null;         // { updatedAt, deals: [{deal_id, date, pharma, partner, deal_type, asset, upfront, total_value, source_url, source}] }
@@ -858,16 +936,26 @@ function saveSettingsToStorage(s) {
   localStorage.setItem(CONFIG.SETTINGS_KEY, JSON.stringify(s));
 }
 
+// 读取市值缓存时顺带把每条公司记录迁移/归一化到新版结构（见 normalizeMarketRecord），
+// 这样旧版缓存（字符串数组 top_products/key_pipeline、summary 字段等）不会导致新版渲染/异动检测代码报错
 function loadCache() {
   const raw = localStorage.getItem(CONFIG.CACHE_KEY);
   if (!raw) return null;
-  try { return JSON.parse(raw); } catch (e) { return null; }
+  let data;
+  try { data = JSON.parse(raw); } catch (e) { return null; }
+  if (data && data.companies) {
+    for (const name of Object.keys(data.companies)) {
+      data.companies[name] = normalizeMarketRecord(data.companies[name]);
+    }
+  }
+  return data;
 }
 
 function saveCacheToStorage(data) {
   localStorage.setItem(CONFIG.CACHE_KEY, JSON.stringify(data));
 }
 
+// revenuePct/profitPct 是市值板块升级新增的字段；旧版 localStorage 里没有这两个key时用默认值兜底，不会报错
 function loadAlertRules() {
   const raw = localStorage.getItem(CONFIG.ALERT_RULES_KEY);
   if (!raw) return { ...CONFIG.DEFAULT_ALERT_RULES };
@@ -875,6 +963,8 @@ function loadAlertRules() {
     const parsed = JSON.parse(raw);
     return {
       marketCapPct: Number(parsed.marketCapPct) >= 0 ? Number(parsed.marketCapPct) : CONFIG.DEFAULT_ALERT_RULES.marketCapPct,
+      revenuePct: Number(parsed.revenuePct) >= 0 ? Number(parsed.revenuePct) : CONFIG.DEFAULT_ALERT_RULES.revenuePct,
+      profitPct: Number(parsed.profitPct) >= 0 ? Number(parsed.profitPct) : CONFIG.DEFAULT_ALERT_RULES.profitPct,
       productSalesPct: Number(parsed.productSalesPct) >= 0 ? Number(parsed.productSalesPct) : CONFIG.DEFAULT_ALERT_RULES.productSalesPct,
       riskKeywords: Array.isArray(parsed.riskKeywords) && parsed.riskKeywords.length ? parsed.riskKeywords : [...CONFIG.DEFAULT_ALERT_RULES.riskKeywords],
     };
@@ -926,13 +1016,106 @@ function saveFeishuWebhookSettings(settingsObj) {
 
 // ==================== LLM 调用 ====================
 
-function buildMessages(batchCompanies) {
+// ==================== 市值与财务：Prompt 构建 ====================
+
+// 全部字段的完整 schema，grounded / 非grounded 两个 prompt 共用。
+// 注意：market_cap_previous / market_cap_change_abs / market_cap_change_pct 不在这份 schema 里——
+// "较上次变化"这类异动判断由前端基于上一次缓存计算（见 computeMarketCapChange），不问模型要，避免两边算出的数字对不上
+const MARKET_RECORD_SCHEMA = '{"company":"必须与输入公司名逐字一致","display_name":"显示名称","ticker":"股票代码或 N/A","exchange":"交易所或 N/A","currency":"币种或 N/A","market_cap":"当前/最近市值，如 2800亿美元；无法判断填 N/A","market_cap_as_of":"市值数据日期，YYYY-MM-DD 或 N/A","market_cap_source":"市场数据API | 公司公告 | 媒体报道 | AI估算 | 其他","market_cap_trend":"up | down | flat | unknown","revenue":"最近报告期收入","revenue_period":"收入报告期，例如 FY2025 / Q2 2026 / N/A","revenue_yoy":"同比变化，例如 +8%；无法判断填 N/A","revenue_source":"公司财报 | Investor Relations | 公司公告 | 媒体报道 | AI估算 | 其他","net_profit":"最近报告期净利润/EBITDA/经营利润，按公司常用口径","profit_period":"利润报告期","profit_yoy":"同比变化；无法判断填 N/A","profit_source":"公司财报 | Investor Relations | 公司公告 | 媒体报道 | AI估算 | 其他","top_products":[{"name":"产品名","sales":"销售额","period":"报告期","yoy":"同比变化；无法判断填 N/A","note":"一句话说明","source_url":"来源链接或 N/A","confidence":"高 | 中 | 低"}],"key_pipeline":[{"asset":"资产/管线名称","indication":"适应症","phase":"Discovery | Preclinical | Ph1 | Ph2 | Ph3 | Filed | Approved | Commercial | N/A","latest_event":"最近关键事件","importance":"高 | 中 | 低","source_url":"来源链接或 N/A","confidence":"高 | 中 | 低"}],"market_summary":"50字内说明公司当前资本市场/基本面关注点","change_explanation":"80字内解释市值或基本面变化的可能原因；信息不足则说明无法判断，不要强行解释","watch_next":"接下来值得关注的1-2个事项","watch_priority":"high | medium | low","data_quality":"高 | 中 | 低 | 待核验","data_sources":[{"field":"market_cap | revenue | net_profit | top_products | key_pipeline","source_type":"市场数据API | 公司财报 | Investor Relations | 公司公告 | 监管/交易所公告 | 媒体报道 | AI估算 | 手动导入 | 其他","source_url":"来源链接或 N/A","data_as_of":"YYYY-MM-DD 或报告期","confidence":"高 | 中 | 低"}]}';
+
+const MARKET_SYSTEM_PROMPT = `你是一位资深医药行业财务与资本市场分析师，负责定期追踪大型 Pharma 公司的市值、财务表现、核心产品销售额和关键管线进展。
+请严格区分三类数据：实时/近实时市场数据（市值、股价）；财报周期数据（收入、利润、产品销售额）；管线事件数据（临床进展、获批、失败、暂停、监管事件）。
+不要编造精确数字。若无法确认精确值，但对数量级有把握，可以给出"约"或区间，并在 data_sources 中把该字段的 source_type 标为"AI估算"，confidence 标为"中"或"低"。如果连数量级也无法判断，填 N/A。
+财报数据必须标注报告期，例如 FY2025、Q2 2026、2025A，不要为了追求"最新"而把未披露的数据编出来。
+产品销售额尽量列出核心产品 Top 3-5，标注销售额、报告期、同比变化；无法确认同比就填 N/A。
+核心管线优先列出对公司中长期估值有影响的 late-stage、newly approved、high-value 或近期发生重大事件的资产，不要列太多早期、低重要性的管线。
+market_summary 不是泛泛而谈，需要解释这家公司当前资本市场/基本面为什么值得关注。
+请用中文输出描述性文字，保留公司名、药物名、靶点、管线代号等专有名词英文。必须输出严格 JSON，company 字段必须与输入公司名逐字一致，不得翻译或替换。`;
+
+// previousRecord 存在时，把上次缓存的关键字段喂给模型作参考（帮助它判断"较上次"的定性方向），
+// 但真正写入 record 的 market_cap_previous/change 由前端重新计算，不采信模型自己给出的变化幅度
+function previousRecordSummaryText(previousRecord) {
+  if (!previousRecord || previousRecord._error) return '（无上次缓存数据）';
+  return `市值：${previousRecord.market_cap || 'N/A'}（${previousRecord.market_cap_as_of || 'N/A'}）；收入：${previousRecord.revenue || 'N/A'}（${previousRecord.revenue_period || 'N/A'}）；利润：${previousRecord.net_profit || 'N/A'}（${previousRecord.profit_period || 'N/A'}）`;
+}
+
+// 无搜索 Key / 无该公司搜索结果时的兜底路径：模型只能凭自身知识判断，准确性弱于 grounded 路径
+function buildMarketMessages(company, previousRecord) {
   const refDate = getReferenceDate();
-  const sys = `你是一位资深医药行业分析师。请根据你掌握的最新公开信息，对以下药企进行财务与市值摘要，每家公司严格按照指定 JSON schema 输出。请将 ${refDate}（即今天的前一天）作为数据基准日：市值等会逐日变化的数据请尽量给出截至该日期（或最近一个交易日）的估算；营收/净利润等按财报周期披露的数据仍以你实际掌握的最新一期财报为准，不要为了凑日期而编造尚未披露的数字。关于缺失数据的处理原则：不要编造精确数字，但只要你对大致数量级有把握，就应该给出"约"字开头的估算值或一个合理区间（例如"约2,500亿美元"或"2,000-2,500亿美元"），不要仅仅因为无法确定精确数字就直接填 "N/A"——"N/A" 只用于你连大致范围都完全无法判断的情况，对于罗氏、辉瑞这类信息公开充分的大型上市公司，几乎不应该出现 N/A。`;
-  const schema = '{"company":"必须与我提供的原始公司名逐字完全一致（无论中文还是英文，禁止翻译、替换为英文名/股票代码/全称或别名）","display_name":"显示名称（中英双语）","market_cap":"最新市值（如 2,800亿美元）","market_cap_trend":"up|down|flat","revenue":"最近一期年收入","net_profit":"净利润或EBITDA","top_products":["产品A 收入X","产品B 收入Y"],"key_pipeline":["管线A (Ph3)","管线B (Ph2)"],"data_as_of":"该数据实际对应的截至日期/报告期（如晚于或早于基准日，请如实填写真实日期，不要强行对齐为基准日）","summary":"50字内的财务亮点或风险提示"}';
-  const names = batchCompanies.map(c => c.name).join('、');
-  const user = `请对以下 ${batchCompanies.length} 家公司逐一输出财务摘要，一家都不能少、也不能合并：${names}\n\n必须输出恰好 ${batchCompanies.length} 条记录，company 字段必须逐字复制我给出的公司名，中文名就原样输出中文、英文名就原样输出英文，不要翻译或替换成别的名称（例如给的是"J&J"就不要写成"Johnson & Johnson"，给的是"百济神州"就不要写成"BeiGene"）。即使某公司信息完全无法确定，也要输出该公司的记录，所有字段填 "N/A"，不允许省略整家公司。\n\n请以严格的 JSON 对象格式返回，格式为 {"companies": [每家公司一个对象，字段如下]}，字段 schema：${schema}\n不要有任何额外文字、不要使用 markdown 代码块。`;
+  const user = `请基于截至 ${refDate} 附近的公开信息，更新公司「${company.name}」在市值、收入、利润、核心产品销售额和核心管线方面的结构化数据。\n\n上次缓存数据（用于判断变化方向，不代表你需要跟这个数字完全对齐）：${previousRecordSummaryText(previousRecord)}\n\n请输出严格 JSON 对象：{"companies": [一条记录，字段如下]}，字段 schema：${MARKET_RECORD_SCHEMA}\n必须返回恰好 1 条记录，company 字段必须逐字复制「${company.name}」，不得翻译或替换。不要输出 markdown。不要输出 JSON 之外的解释文字。无法确认的字段填 N/A，不要编造。如果某个字段是估算，必须在 data_sources 中标注 source_type = AI估算。`;
+  return [{ role: 'system', content: MARKET_SYSTEM_PROMPT }, { role: 'user', content: user }];
+}
+
+// 用真实搜索结果（来自用户选择的搜索服务商）作为依据构造 prompt，要求模型优先采信搜索结果里的具体数字/链接，
+// 搜索结果没有覆盖到但模型对数量级有把握的字段仍可给出估算，但必须标注 AI估算
+function buildMarketMessagesGrounded(company, searchContext, previousRecord) {
+  const refDate = getReferenceDate();
+  const sys = MARKET_SYSTEM_PROMPT + `\n请优先采纳下面提供的搜索结果中的具体数字、报告期和来源链接；搜索结果没有覆盖到的字段，如果你对数量级有把握，仍可以给出"约"或区间估算，但必须在 data_sources 中标注 source_type = AI估算，不要编造搜索结果中不存在的具体数字或链接。`;
+  const resultsText = searchContext.length
+    ? searchContext.map((r, i) => `${i + 1}. ${r.title}\n   链接：${r.url}\n   发布日期：${r.published_date || '未知'}\n   摘要：${r.content || r.snippet}`).join('\n')
+    : '（未搜到相关结果，请基于自身知识判断，并将相关字段标注为 AI估算）';
+  const user = `以下是针对公司「${company.name}」（基准日 ${refDate}）市值/财报/管线相关的搜索结果：\n\n${resultsText}\n\n上次缓存数据（用于判断变化方向，不代表你需要跟这个数字完全对齐）：${previousRecordSummaryText(previousRecord)}\n\n请更新该公司在市值、收入、利润、核心产品销售额和核心管线方面的结构化数据。请输出严格 JSON 对象：{"companies": [一条记录，字段如下]}，字段 schema：${MARKET_RECORD_SCHEMA}\n必须返回恰好 1 条记录，company 字段必须逐字复制「${company.name}」，不得翻译或替换。不要输出 markdown。不要输出 JSON 之外的解释文字。无法确认的字段填 N/A，不要编造。`;
   return [{ role: 'system', content: sys }, { role: 'user', content: user }];
+}
+
+// 精简搜索 query：ticker优先（更容易搜到准确的市值/股价页面）+ 公司名财报关键词 + 中文关键词 + site:官网（如已配置）
+function buildMarketSearchQueries(company) {
+  const queries = [];
+  queries.push(company.ticker ? `${company.ticker} ${company.name} stock market cap` : `${company.name} stock market cap`);
+  queries.push(`${company.name} quarterly earnings revenue net profit`);
+  const cnName = (company.aliases || []).find(a => /[一-龥]/.test(a)) || company.name;
+  queries.push(`${cnName} 市值 财报 收入 净利润`);
+  if (company.officialDomains && company.officialDomains.length) {
+    queries.push(`site:${company.officialDomains[0]} investor relations quarterly results`);
+  }
+  return queries;
+}
+
+// 对一家公司跑完全部 query，按 URL 去重后再喂给 LLM；逻辑跟 gatherAiSearchContextForCompany 一致
+async function gatherMarketSearchContextForCompany(company, providerId, apiKey, lookbackDays) {
+  const queries = buildMarketSearchQueries(company);
+  const seenUrls = new Set();
+  const dedupedResults = [];
+  const partialErrors = [];
+  for (const query of queries) {
+    try {
+      const results = await searchWeb(query, providerId, apiKey, lookbackDays);
+      for (const r of results) {
+        if (!r.url || seenUrls.has(r.url)) continue;
+        seenUrls.add(r.url);
+        dedupedResults.push(r);
+      }
+    } catch (err) {
+      partialErrors.push(err.message);
+    }
+    await sleep(1100); // 避免触发搜索服务商免费额度的每秒请求限制
+  }
+  if (partialErrors.length === queries.length) {
+    const e = new Error(`搜索请求全部失败，请检查 API Key 或网络（示例：${partialErrors[0]}）`);
+    e.type = 'search_failed';
+    throw e;
+  }
+  return { results: dedupedResults, partialErrors };
+}
+
+// 市值变化由前端基于"这次拿到的 market_cap"和"上一次缓存的 market_cap"计算，不采信模型自己给的变化幅度
+// （异动判断应尽量由前端基于结构化字段和历史缓存计算，不要完全交给 AI 判断）
+function computeMarketCapChange(record, previousRecord) {
+  const prevCap = previousRecord && !previousRecord._error ? previousRecord.market_cap : null;
+  record.market_cap_previous = (prevCap && prevCap !== 'N/A') ? prevCap : 'N/A';
+  const oldVal = prevCap ? parseApproxAmount(prevCap) : null;
+  const newVal = parseApproxAmount(record.market_cap);
+  if (oldVal === null || newVal === null || oldVal === 0) {
+    record.market_cap_change_abs = 'N/A';
+    record.market_cap_change_pct = 'N/A';
+    return record;
+  }
+  const changeAbs = newVal - oldVal;
+  const changePct = (changeAbs / oldVal) * 100;
+  record.market_cap_change_abs = `${changeAbs >= 0 ? '+' : ''}${changeAbs.toFixed(2)}亿`;
+  record.market_cap_change_pct = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(1)}%`;
+  record.market_cap_trend = Math.abs(changePct) < 0.5 ? 'flat' : (changePct > 0 ? 'up' : 'down');
+  return record;
 }
 
 function fetchWithTimeout(url, options, timeoutMs) {
@@ -953,24 +1136,86 @@ function extractJson(content) {
   throw new Error('PARSE_FAILED');
 }
 
-function normalizeCompanyRecord(raw) {
-  const record = {};
-  for (const field of CONFIG.FIELDS) {
-    if (field === 'top_products' || field === 'key_pipeline') {
-      record[field] = Array.isArray(raw[field]) ? raw[field] : [];
-    } else {
-      record[field] = (raw[field] === undefined || raw[field] === null || raw[field] === '') ? 'N/A' : raw[field];
-    }
+// ==================== 市值与财务：记录归一化 / 旧缓存迁移 ====================
+// top_products 单条：兼容旧版"一整条字符串描述"（如 "Eliquis 收入约120亿美元"）——整体塞进 name，
+// 其余结构化字段（sales/period/yoy/来源）在旧数据里本来就不存在，标为待确认，不臆造
+function normalizeProductEntry(p) {
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    return {
+      name: p.name || 'N/A',
+      sales: p.sales || 'N/A',
+      period: p.period || 'N/A',
+      yoy: p.yoy || 'N/A',
+      note: p.note || 'N/A',
+      source_url: p.source_url || 'N/A',
+      confidence: CONFIG.MARKET_CONFIDENCE_LEVELS.includes(p.confidence) ? p.confidence : '低',
+    };
   }
+  return { name: String(p || 'N/A'), sales: 'N/A', period: 'N/A', yoy: 'N/A', note: 'N/A', source_url: 'N/A', confidence: '低' };
+}
+
+function normalizePipelineEntry(p) {
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    return {
+      asset: p.asset || 'N/A',
+      indication: p.indication || 'N/A',
+      phase: CONFIG.MARKET_PIPELINE_PHASES.includes(p.phase) ? p.phase : 'N/A',
+      latest_event: p.latest_event || 'N/A',
+      importance: ['高', '中', '低'].includes(p.importance) ? p.importance : '中',
+      source_url: p.source_url || 'N/A',
+      confidence: CONFIG.MARKET_CONFIDENCE_LEVELS.includes(p.confidence) ? p.confidence : '低',
+    };
+  }
+  return { asset: String(p || 'N/A'), indication: 'N/A', phase: 'N/A', latest_event: 'N/A', importance: '中', source_url: 'N/A', confidence: '低' };
+}
+
+function normalizeDataSourceEntry(s) {
+  if (!s || typeof s !== 'object') return null;
+  return {
+    field: s.field || 'N/A',
+    source_type: CONFIG.MARKET_SOURCE_TYPES.includes(s.source_type) ? s.source_type : '其他',
+    source_url: s.source_url || 'N/A',
+    data_as_of: s.data_as_of || 'N/A',
+    confidence: CONFIG.MARKET_CONFIDENCE_LEVELS.includes(s.confidence) ? s.confidence : '低',
+  };
+}
+
+// 把任意版本的公司记录（旧版纯字符串 summary/top_products/key_pipeline，或新版结构化字段）统一升级/归一化成新版结构。
+// 用于两个场景：① init() 读取旧缓存时逐条迁移；② 新一轮 LLM 返回结果的归一化。
+// 这里只做"字段形状"的归一化，不计算市值较上次变化——那部分需要拿到上一次缓存值才能算，见 computeMarketCapChange()
+function normalizeMarketRecord(raw) {
+  if (!raw) return null;
+  const record = {};
+  for (const f of CONFIG.MARKET_FIELDS) {
+    record[f] = (raw[f] === undefined || raw[f] === null || raw[f] === '') ? 'N/A' : raw[f];
+  }
+  record.company = raw.company || 'N/A';
+  record.display_name = raw.display_name || record.company;
+
+  // 旧版字段兼容映射：summary -> market_summary；data_as_of -> market_cap_as_of / revenue_period（旧版没有细分这两者）
+  if ((!raw.market_summary || raw.market_summary === 'N/A') && raw.summary) record.market_summary = raw.summary;
+  if ((!raw.market_cap_as_of || raw.market_cap_as_of === 'N/A') && raw.data_as_of) record.market_cap_as_of = raw.data_as_of;
+  if ((!raw.revenue_period || raw.revenue_period === 'N/A') && raw.data_as_of) record.revenue_period = raw.data_as_of;
+
+  record.market_cap_trend = ['up', 'down', 'flat', 'unknown'].includes(raw.market_cap_trend) ? raw.market_cap_trend : 'unknown';
+  if (!CONFIG.MARKET_SOURCE_TYPES.includes(record.market_cap_source)) record.market_cap_source = 'AI估算';
+  if (!CONFIG.MARKET_SOURCE_TYPES.includes(record.revenue_source)) record.revenue_source = 'AI估算';
+  if (!CONFIG.MARKET_SOURCE_TYPES.includes(record.profit_source)) record.profit_source = 'AI估算';
+  if (!CONFIG.MARKET_WATCH_PRIORITIES.includes(record.watch_priority)) record.watch_priority = 'low';
+  if (!CONFIG.MARKET_DATA_QUALITY_LEVELS.includes(record.data_quality)) record.data_quality = '待核验';
+
+  record.top_products = Array.isArray(raw.top_products) ? raw.top_products.map(normalizeProductEntry) : [];
+  record.key_pipeline = Array.isArray(raw.key_pipeline) ? raw.key_pipeline.map(normalizePipelineEntry) : [];
+  record.data_sources = Array.isArray(raw.data_sources) ? raw.data_sources.map(normalizeDataSourceEntry).filter(Boolean) : [];
+
+  if (raw._error) record._error = true;
   return record;
 }
 
-function placeholderRecord(name, reason) {
-  return {
-    company: name, display_name: name, market_cap: '数据暂缺', market_cap_trend: 'flat',
-    revenue: '数据暂缺', net_profit: '数据暂缺', top_products: [], key_pipeline: [],
-    data_as_of: 'N/A', summary: reason || '获取失败', _error: true,
-  };
+function marketPlaceholderRecord(name, reason) {
+  return normalizeMarketRecord({
+    company: name, display_name: name, market_summary: reason || '获取失败', _error: true,
+  });
 }
 
 // ==================== 通用 LLM 请求层（板块一/板块二共用） ====================
@@ -1056,19 +1301,34 @@ async function callLLM(messages, s) {
   throw lastError;
 }
 
-// 板块一：请求一批公司的财务摘要，校验 {companies:[...]} 结构并归一化
-async function fetchCompanyBatch(batch, s) {
-  const parsed = await callLLM(buildMessages(batch), s);
+// 板块一：请求单家公司的市值/财务/产品/管线结构化数据；配置了搜索 Key 时走 grounded 路径（真实搜索结果作为依据），
+// 否则退回纯模型知识路径。校验 {companies:[...]} 结构、归一化，并在此处计算市值"较上次变化"
+async function fetchMarketDataForCompany(company, s, lookbackDays, previousRecord) {
+  let messages;
+  let partialErrors = [];
+  let llmSettings = s;
+  if (s.searchApiKey) {
+    const context = await gatherMarketSearchContextForCompany(company, s.searchProvider, s.searchApiKey, lookbackDays);
+    messages = buildMarketMessagesGrounded(company, context.results, previousRecord);
+    partialErrors = context.partialErrors;
+    llmSettings = { ...s, webSearchEnabled: false }; // 已经 grounded 过了，不需要模型再自己联网搜一遍
+  } else {
+    messages = buildMarketMessages(company, previousRecord);
+  }
+
+  const parsed = await callLLM(messages, llmSettings);
   const list = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.companies) ? parsed.companies : null);
-  if (!list) {
+  if (!list || !list.length) {
     const err = new Error('JSON 结构不符合预期（缺少 companies 数组）'); err.type = 'parse_error'; err.raw = JSON.stringify(parsed); throw err;
   }
-  return list.map(normalizeCompanyRecord);
+  const record = normalizeMarketRecord(list[0]);
+  computeMarketCapChange(record, previousRecord);
+  return { record, partialErrors };
 }
 
 // ==================== 异动检测 ====================
 
-// 市值涨跌幅异动
+// 市值涨跌幅异动：兜底路径，直接比对新旧记录的 market_cap 原始值；仅在 market_cap_change_pct 缺失/无法解析时使用
 function detectMarketCapAlert(oldRec, newRec, thresholdPct) {
   const oldVal = parseApproxAmount(oldRec.market_cap);
   const newVal = parseApproxAmount(newRec.market_cap);
@@ -1080,101 +1340,130 @@ function detectMarketCapAlert(oldRec, newRec, thresholdPct) {
   return null;
 }
 
-// 从产品描述文本中粗略提取"产品名"部分（数字出现之前的内容），用于新旧两次描述之间的近似配对
-function parseProductName(str) {
-  if (!str || typeof str !== 'string') return '';
-  const idx = str.search(/[\d]/);
-  const namePart = idx > 0 ? str.slice(0, idx) : str;
-  return normalizeCompanyName(namePart);
+// 从任意格式的文本里解析出一个带符号的百分比数值：兼容 "+8%"、"-5.8%"、"同比增长8%"、"下降5%" 等写法。
+// 解析失败返回 null——调用方应视为"无法判断"从而不触发异动，而不是当成 0（宁可漏判，不误判）
+function parsePercentChange(str) {
+  if (!str || typeof str !== 'string') return null;
+  const s = str.trim();
+  if (!s || s === 'N/A') return null;
+  const match = s.match(/([+-]?)\s*([\d]+(?:\.[\d]+)?)\s*%/);
+  if (!match) return null;
+  const num = parseFloat(match[2]);
+  if (isNaN(num)) return null;
+  const negativeWord = /下降|下滑|减少|降低|下跌|收缩|萎缩/.test(s);
+  const positiveWord = /增长|上涨|提升|增加|上升/.test(s);
+  if (match[1] === '-' || negativeWord) return -Math.abs(num);
+  if (match[1] === '+' || positiveWord) return Math.abs(num);
+  return Math.abs(num); // 裸数字（无符号也无关键词）默认按正数处理
 }
 
-// 关键管线新增条目异动（归一化比对，降低模型措辞差异导致的误判）
-function detectPipelineAlert(oldList, newList) {
-  if (!Array.isArray(oldList) || !Array.isArray(newList)) return null;
-  const oldSet = new Set(oldList.map(p => normalizeCompanyName(p)).filter(Boolean));
-  const hasNew = newList.some(p => {
-    const n = normalizeCompanyName(p);
-    return n && !oldSet.has(n);
-  });
-  return hasNew ? { type: 'pipeline', label: '新增管线' } : null;
-}
-
-// 核心产品销售额变化异动（按产品名近似配对新旧描述，解析金额后比较涨跌幅）
-function detectProductAlerts(oldList, newList, thresholdPct) {
-  const alerts = [];
-  if (!Array.isArray(oldList) || !Array.isArray(newList)) return alerts;
-  for (const newP of newList) {
-    const newName = parseProductName(newP);
-    if (!newName) continue;
-    const oldP = oldList.find(p => parseProductName(p) === newName);
-    if (!oldP) continue;
-    const oldAmt = parseApproxAmount(oldP);
-    const newAmt = parseApproxAmount(newP);
-    if (oldAmt === null || newAmt === null || oldAmt === 0) continue;
-    const pct = ((newAmt - oldAmt) / oldAmt) * 100;
-    if (Math.abs(pct) >= thresholdPct) {
-      alerts.push({ type: 'product', label: `核心产品${pct >= 0 ? '↑' : '↓'}${Math.abs(pct).toFixed(0)}%` });
-      break; // 一条标签代表"存在此类异动"即可，避免卡片被同类标签刷屏
-    }
-  }
-  return alerts;
-}
-
-// 摘要文本命中风险关键词异动
-function detectRiskKeywordAlert(summary, keywords) {
-  if (!summary || typeof summary !== 'string') return null;
-  const hit = keywords.find(k => k && summary.includes(k));
-  return hit ? { type: 'risk', label: `⚠️ 含风险词(${hit})` } : null;
-}
-
-// 汇总单家公司命中的全部异动规则；任一记录是错误占位符（数据暂缺）时不比对，避免误判
-function detectAlerts(oldRec, newRec, rules) {
+// 市值/财务/产品/管线异动检测（升级版）：覆盖市值、收入、利润、产品销售额、管线重大事件、风险关键词、推送优先级共7类。
+// 任一记录是错误占位符时整体跳过；任何一类的百分比解析失败就跳过该类，不强行判断
+function detectMarketAlerts(oldRec, newRec, rules) {
   if (!oldRec || !newRec || oldRec._error || newRec._error) return [];
   const alerts = [];
-  const mc = detectMarketCapAlert(oldRec, newRec, rules.marketCapPct);
-  if (mc) alerts.push(mc);
-  const pipe = detectPipelineAlert(oldRec.key_pipeline, newRec.key_pipeline);
-  if (pipe) alerts.push(pipe);
-  alerts.push(...detectProductAlerts(oldRec.top_products, newRec.top_products, rules.productSalesPct));
-  const risk = detectRiskKeywordAlert(newRec.summary, rules.riskKeywords);
-  if (risk) alerts.push(risk);
+
+  // 1. 市值变化：优先用前端已算好的 market_cap_change_pct；解析失败时退回直接比对市值原始值
+  const capPct = parsePercentChange(newRec.market_cap_change_pct);
+  if (capPct !== null) {
+    if (Math.abs(capPct) >= rules.marketCapPct) {
+      alerts.push({ type: 'market_cap', label: `市值${capPct >= 0 ? '↑' : '↓'}${Math.abs(capPct).toFixed(1)}%` });
+    }
+  } else {
+    const mc = detectMarketCapAlert(oldRec, newRec, rules.marketCapPct);
+    if (mc) alerts.push(mc);
+  }
+
+  // 2. 收入异动
+  const revPct = parsePercentChange(newRec.revenue_yoy);
+  if (revPct !== null && Math.abs(revPct) >= rules.revenuePct) {
+    alerts.push({ type: 'revenue', label: `收入${revPct >= 0 ? '↑' : '↓'}${Math.abs(revPct).toFixed(0)}%` });
+  }
+
+  // 3. 利润异动
+  const profitPct = parsePercentChange(newRec.profit_yoy);
+  if (profitPct !== null && Math.abs(profitPct) >= rules.profitPct) {
+    alerts.push({ type: 'profit', label: `利润${profitPct >= 0 ? '↑' : '↓'}${Math.abs(profitPct).toFixed(0)}%` });
+  }
+
+  // 4. 产品销售额异动：任一核心产品同比变化超阈值即可，一条标签代表"存在此类异动"，避免卡片被同类标签刷屏
+  const hasProductAlert = (newRec.top_products || []).some(p => {
+    const pct = parsePercentChange(p.yoy);
+    return pct !== null && Math.abs(pct) >= rules.productSalesPct;
+  });
+  if (hasProductAlert) alerts.push({ type: 'product', label: '核心产品销售额异动' });
+
+  // 5. 管线重大事件：latest_event 命中关键词（大小写不敏感）
+  const hasPipelineEvent = (newRec.key_pipeline || []).some(p => {
+    const text = String(p.latest_event || '').toLowerCase();
+    return text && text !== 'n/a' && CONFIG.MARKET_PIPELINE_EVENT_KEYWORDS.some(k => text.includes(k.toLowerCase()));
+  });
+  if (hasPipelineEvent) alerts.push({ type: 'pipeline', label: '重大管线事件' });
+
+  // 6. 风险关键词：market_summary / change_explanation / watch_next 任一命中即可
+  const riskText = [newRec.market_summary, newRec.change_explanation, newRec.watch_next].filter(Boolean).join(' ');
+  const riskHit = rules.riskKeywords.find(k => k && riskText.includes(k));
+  if (riskHit) alerts.push({ type: 'risk', label: `⚠️ 含风险词(${riskHit})` });
+
+  // 7. 推送优先级：watch_priority = high 时提示"建议推送"
+  if (newRec.watch_priority === 'high') alerts.push({ type: 'watch', label: '建议推送' });
+
   return alerts;
 }
 
 // ==================== 主流程：刷新数据 ====================
 
-// 处理一批公司：成功则写入结果并对未命中的公司打占位符；超时且批次可再拆分时对半拆开分别重试，
-// 而不是直接放弃整批——这样"批次里有一两家公司拖慢速度"不会连累同批其他公司也超时失败
-async function processCompanyBatch(batch) {
+// 自适应回溯期：刚刷新过没多久，只需要看这段间隔+缓冲天数；首次使用/隔太久没刷新，用 MARKET_LOOKBACK_MAX_DAYS 封顶
+function computeMarketLookbackDays() {
+  if (!cacheData || !cacheData.updatedAt) return CONFIG.MARKET_LOOKBACK_DEFAULT_DAYS;
+  const gap = Math.ceil(daysSince(cacheData.updatedAt)) + CONFIG.MARKET_LOOKBACK_BUFFER_DAYS;
+  return Math.min(CONFIG.MARKET_LOOKBACK_MAX_DAYS, Math.max(CONFIG.MARKET_LOOKBACK_MIN_DAYS, gap));
+}
+
+// 手动更新范围覆盖：默认沿用自适应 computeMarketLookbackDays()，用户可在工具条选择固定 2/7/14/30 天用于调试或补查
+function getMarketLookbackDaysWithOverride() {
+  const mode = document.getElementById('marketLookbackModeSelect')?.value || 'auto';
+  const opt = CONFIG.MARKET_LOOKBACK_OVERRIDE_OPTIONS.find(o => o.value === mode);
+  if (opt && opt.days !== null) return { days: opt.days, mode: `manual_${opt.days}` };
+  return { days: computeMarketLookbackDays(), mode: 'auto' };
+}
+
+// 公司范围覆盖：默认仍是全部公司，选中某家公司时只更新这一家（跟 BD/AI 板块同款下拉框）
+function getMarketSearchScope() {
+  const val = document.getElementById('marketCompanyScopeSelect')?.value || 'all';
+  if (val === 'all') return CONFIG.COMPANIES;
+  const match = CONFIG.COMPANIES.find(c => c.name === val);
+  return match ? [match] : CONFIG.COMPANIES;
+}
+
+// 列出 CONFIG.COMPANIES 里的全部公司（不是只列"已有结果的公司"），跟 BD/AI 板块的公司范围下拉框同款，
+// 选项是静态的，只需在 init() 时填充一次
+function populateMarketCompanyScopeSelect() {
+  const select = document.getElementById('marketCompanyScopeSelect');
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML = '<option value="all">公司范围：全部</option>' +
+    CONFIG.COMPANIES.map(c => `<option value="${escapeHtml(c.name)}">只查：${escapeHtml(c.name)}</option>`).join('');
+  if ([...select.options].some(o => o.value === currentValue)) select.value = currentValue;
+}
+
+// 处理单家公司：成功则写入结果，失败则打占位符并记录错误信息。市值板块每次只处理1家公司（MARKET_BATCH_SIZE=1），
+// 本身就是最小处理单位，不需要像 BD 那样"批次超时后对半拆分重试"
+async function processMarketBatch(company, previousCompanies, lookbackDays) {
+  const previousRecord = previousCompanies ? previousCompanies[company.name] : null;
   try {
-    const results = await fetchCompanyBatch(batch, settings);
-    const unresolved = new Set(batch.map(c => c.name));
-    for (const r of results) {
-      // 优先精确匹配请求的公司名；模型改写/扩写了名称（如 J&J -> Johnson & Johnson）时用别名/归一化匹配兜底
-      const matched = batch.find(c => unresolved.has(c.name) && matchesCompany(r.company, c));
-      if (matched) {
-        cacheData.companies[matched.name] = r;
-        unresolved.delete(matched.name);
-        pendingCompanyKeys.delete(matched.name);
-      }
-    }
-    for (const name of unresolved) {
-      cacheData.companies[name] = placeholderRecord(name, '模型未返回该公司数据');
-      pendingCompanyKeys.delete(name);
+    const { record, partialErrors } = await fetchMarketDataForCompany(company, settings, lookbackDays, previousRecord);
+    // 模型返回的 company 名对不上时仍以我们请求的公司名为准写入缓存，避免归属错乱（沿用 BD/AI 板块同款兜底）
+    if (!matchesCompany(record.company, company)) record.company = company.name;
+    cacheData.companies[company.name] = record;
+    pendingCompanyKeys.delete(company.name);
+    if (partialErrors && partialErrors.length) {
+      errorMessages.push(`${company.name}：部分检索请求失败（已跳过，不影响其他公司）：${partialErrors[0]}`);
     }
   } catch (err) {
-    if (err.type === 'timeout' && batch.length > 1) {
-      const mid = Math.ceil(batch.length / 2);
-      await processCompanyBatch(batch.slice(0, mid));
-      await processCompanyBatch(batch.slice(mid));
-      return;
-    }
-    const names = batch.map(c => c.name).join('、');
-    errorMessages.push(`[${names}] ${err.message}${err.raw ? '（原始返回：' + err.raw.slice(0, 150) + '…）' : ''}`);
-    for (const c of batch) {
-      cacheData.companies[c.name] = placeholderRecord(c.name, err.message);
-      pendingCompanyKeys.delete(c.name);
-    }
+    errorMessages.push(`[${company.name}] ${err.message}${err.raw ? '（原始返回：' + String(err.raw).slice(0, 150) + '…）' : ''}`);
+    cacheData.companies[company.name] = marketPlaceholderRecord(company.name, err.message);
+    pendingCompanyKeys.delete(company.name);
   }
   renderCards();
   renderErrorBanner();
@@ -1187,27 +1476,32 @@ async function refreshAllData() {
   renderErrorBanner();
   updateRefreshButtonState(true);
 
+  // 必须在任何公司开始改写 cacheData.updatedAt 之前算好，否则跑到第二家公司时"距离上次刷新"就会被误判成"刚刚"
+  const { days: lookbackDays, mode: lookbackMode } = getMarketLookbackDaysWithOverride();
+  const companiesToUpdate = getMarketSearchScope();
+
   // 首次使用（无历史缓存）时跳过异动对比；否则先快照旧数据用于刷新后 diff
   const isFirstRun = !cacheData;
   const previousCompanies = cacheData ? JSON.parse(JSON.stringify(cacheData.companies || {})) : null;
 
-  pendingCompanyKeys = new Set(CONFIG.COMPANIES.map(c => c.name));
+  pendingCompanyKeys = new Set(companiesToUpdate.map(c => c.name));
   if (!cacheData) cacheData = { updatedAt: null, companies: {} };
   cacheData.referenceDate = getReferenceDate();
   renderCards();
 
-  const batches = chunkArray(CONFIG.COMPANIES, CONFIG.BATCH_SIZE);
-  for (const batch of batches) {
-    await processCompanyBatch(batch);
+  for (const company of companiesToUpdate) {
+    await processMarketBatch(company, previousCompanies, lookbackDays);
   }
 
   cacheData.updatedAt = new Date().toISOString();
+  cacheData.lookbackDays = lookbackDays;
+  cacheData.lookbackMode = lookbackMode;
 
   // 异动检测：本次结果逐条对比上一次缓存快照
   companyAlerts = {};
   if (!isFirstRun) {
-    for (const c of CONFIG.COMPANIES) {
-      const alerts = detectAlerts(previousCompanies[c.name], cacheData.companies[c.name], alertRules);
+    for (const c of companiesToUpdate) {
+      const alerts = detectMarketAlerts(previousCompanies[c.name], cacheData.companies[c.name], alertRules);
       if (alerts.length) companyAlerts[c.name] = alerts;
     }
   }
@@ -1257,29 +1551,48 @@ function renderErrorBanner() {
 }
 
 // 刷新完成后的异动汇总提示：首次使用不展示；有异动/无异动两种状态
+// 刷新完成后的汇总提示：由前端基于结构化字段统计，不经过 AI 生成（首次使用/无数据时不展示）
 function renderAlertSummaryBanner(isFirstRun) {
   const el = document.getElementById('alertSummaryBanner');
-  if (isFirstRun) { el.innerHTML = ''; return; }
-  const count = Object.keys(companyAlerts).length;
-  if (count > 0) {
-    el.innerHTML = `<div class="px-4 py-3 rounded-lg bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-200 text-sm">🔔 本次发现 ${count} 家公司出现异动，已高亮显示</div>`;
-  } else {
-    el.innerHTML = `<div class="px-4 py-3 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm">本次数据无明显异动</div>`;
-  }
+  if (isFirstRun || !cacheData) { el.innerHTML = ''; return; }
+  const companies = Object.values(cacheData.companies || {}).filter(c => c && !c._error);
+  if (!companies.length) { el.innerHTML = ''; return; }
+  const upCount = companies.filter(c => c.market_cap_trend === 'up').length;
+  const downCount = companies.filter(c => c.market_cap_trend === 'down').length;
+  const flatCount = companies.filter(c => c.market_cap_trend === 'flat').length;
+  const alertCompanyCount = Object.keys(companyAlerts).length;
+  const pushCount = Object.values(companyAlerts).filter(alerts => alerts.some(a => a.type === 'watch')).length;
+  const summaryLine = `本次更新：${companies.length}家公司中，${upCount}家上涨，${downCount}家下跌，${flatCount}家基本持平；${alertCompanyCount}家公司触发显著异动，其中${pushCount}家建议推送。`;
+  const cls = alertCompanyCount > 0
+    ? 'bg-rose-50 dark:bg-rose-900/30 border-rose-200 dark:border-rose-700 text-rose-700 dark:text-rose-200'
+    : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400';
+  el.innerHTML = `<div class="px-4 py-3 rounded-lg border ${cls} text-sm">${alertCompanyCount > 0 ? '🔔 ' : ''}${escapeHtml(summaryLine)}</div>`;
 }
 
 function renderToolbar() {
   const el = document.getElementById('lastUpdatedText');
   const refEl = document.getElementById('referenceDateText');
+  const lookbackEl = document.getElementById('marketLookbackText');
   if (!cacheData || !cacheData.updatedAt) {
     el.textContent = '尚未获取过数据';
     refEl.textContent = '';
+    if (lookbackEl) lookbackEl.textContent = '';
     return;
   }
   const stale = daysSince(cacheData.updatedAt) > CONFIG.CACHE_WARN_DAYS;
   el.innerHTML = `上次更新时间：${formatDateTime(cacheData.updatedAt)}` +
     (stale ? ' <span class="ml-1 px-2 py-0.5 rounded bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-xs">数据已超过 3 天，建议刷新</span>' : '');
   refEl.textContent = cacheData.referenceDate ? `（要求模型以 ${cacheData.referenceDate} 为数据基准日）` : '';
+  if (lookbackEl) lookbackEl.textContent = cacheData.lookbackDays ? `（上次更新范围：过去 ${cacheData.lookbackDays} 天）` : '';
+}
+
+// 记录的信源等级：取 market_cap_source/revenue_source/profit_source 里最不可信的一档，
+// 用于"仅信源不明"筛选和详情展示；三个字段目前都只是标量 source_type，还没有到"逐产品/逐管线"的信源分层
+function marketRecordSourceTier(record) {
+  const tiers = [record.market_cap_source, record.revenue_source, record.profit_source]
+    .map(t => CONFIG.MARKET_SOURCE_TYPE_TIER_MAP[t] || 'Unknown');
+  return tiers.reduce((worst, t) =>
+    CONFIG.SOURCE_TIER_PRIORITY.indexOf(t) > CONFIG.SOURCE_TIER_PRIORITY.indexOf(worst) ? t : worst, 'T1');
 }
 
 function getFilteredSortedCompanies() {
@@ -1287,11 +1600,45 @@ function getFilteredSortedCompanies() {
   if (alertFilterOnly) {
     list = list.filter(c => companyAlerts[c.name] && companyAlerts[c.name].length);
   }
+  if (marketExtraFilter !== 'all') {
+    list = list.filter(c => {
+      const data = cacheData?.companies?.[c.name];
+      if (!data) return false;
+      if (marketExtraFilter === 'alerts') return companyAlerts[c.name] && companyAlerts[c.name].length;
+      if (marketExtraFilter === 'watch_high') return data.watch_priority === 'high';
+      if (marketExtraFilter === 'quality_pending') return data.data_quality === '待核验';
+      if (marketExtraFilter === 'tier_unknown') return marketRecordSourceTier(data) === 'Unknown';
+      return true;
+    });
+  }
   if (currentSort !== 'default') {
     list = [...list].sort((a, b) => {
-      const va = parseMarketCapNumeric(cacheData?.companies?.[a.name]?.market_cap);
-      const vb = parseMarketCapNumeric(cacheData?.companies?.[b.name]?.market_cap);
-      return currentSort === 'desc' ? vb - va : va - vb;
+      if (currentSort === 'desc' || currentSort === 'asc') {
+        const va = parseMarketCapNumeric(cacheData?.companies?.[a.name]?.market_cap);
+        const vb = parseMarketCapNumeric(cacheData?.companies?.[b.name]?.market_cap);
+        return currentSort === 'desc' ? vb - va : va - vb;
+      }
+      if (currentSort === 'changeDesc') {
+        // 市值变化幅度从高到低：不分涨跌，看变化绝对值大小；未知值排最后
+        const pa = parsePercentChange(cacheData?.companies?.[a.name]?.market_cap_change_pct);
+        const pb = parsePercentChange(cacheData?.companies?.[b.name]?.market_cap_change_pct);
+        const va = pa === null ? -Infinity : Math.abs(pa);
+        const vb = pb === null ? -Infinity : Math.abs(pb);
+        return vb - va;
+      }
+      if (currentSort === 'changeAsc') {
+        // 跌幅从高到低：按有符号变化值升序排列，跌得越多排越前；未知值排最后
+        const pa = parsePercentChange(cacheData?.companies?.[a.name]?.market_cap_change_pct);
+        const pb = parsePercentChange(cacheData?.companies?.[b.name]?.market_cap_change_pct);
+        return (pa === null ? Infinity : pa) - (pb === null ? Infinity : pb);
+      }
+      if (currentSort === 'watchPriority') {
+        const order = { high: 0, medium: 1, low: 2 };
+        const wa = order[cacheData?.companies?.[a.name]?.watch_priority] ?? 3;
+        const wb = order[cacheData?.companies?.[b.name]?.watch_priority] ?? 3;
+        return wa - wb;
+      }
+      return 0;
     });
   }
   return list;
@@ -1308,42 +1655,139 @@ function skeletonCardHtml() {
     </div>`;
 }
 
+function marketDataQualityCls(q) {
+  if (q === '高') return 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300';
+  if (q === '中') return 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300';
+  if (q === '低') return 'bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300';
+  return 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'; // 待核验
+}
+
+// 详情展开：市值变化表 / 财务数据 / 产品销售额表 / 核心管线表 / AI解释 / 数据来源。
+// 市值板块 Phase 1 没有独立的"深挖分析"二次 LLM 调用——所有字段已经在首次抓取时一次性返回，这里只是换个更细的排版展示
+function marketDetailBlockHtml(data) {
+  const productsRows = data.top_products.length
+    ? data.top_products.map(p => `
+        <tr class="border-t border-slate-100 dark:border-slate-700">
+          <td class="py-1 pr-2">${escapeHtml(p.name)}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.sales))}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.period))}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.yoy))}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.note))}</td>
+          <td class="py-1">${p.source_url && p.source_url !== 'N/A' ? `<a href="${escapeHtml(p.source_url)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline">链接</a>` : '待确认'}</td>
+        </tr>`).join('')
+    : `<tr><td colspan="6" class="py-2 text-slate-400">待确认</td></tr>`;
+
+  const pipelineRows = data.key_pipeline.length
+    ? data.key_pipeline.map(p => `
+        <tr class="border-t border-slate-100 dark:border-slate-700">
+          <td class="py-1 pr-2">${escapeHtml(p.asset)}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.indication))}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.phase))}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.latest_event))}</td>
+          <td class="py-1 pr-2">${escapeHtml(formatFieldValue(p.importance))}</td>
+          <td class="py-1">${p.source_url && p.source_url !== 'N/A' ? `<a href="${escapeHtml(p.source_url)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline">链接</a>` : '待确认'}</td>
+        </tr>`).join('')
+    : `<tr><td colspan="6" class="py-2 text-slate-400">待确认</td></tr>`;
+
+  const sources = data.data_sources.length
+    ? data.data_sources.map(s => `<div>${escapeHtml(s.field)}：${escapeHtml(s.source_type)}${s.source_url && s.source_url !== 'N/A' ? ` · <a href="${escapeHtml(s.source_url)}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline">链接</a>` : ''} · ${escapeHtml(s.data_as_of)} · 可信度${escapeHtml(s.confidence)}</div>`).join('')
+    : '<div class="text-slate-400">待确认</div>';
+
+  return `
+    <div class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3 text-sm">
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">📈 市值变化</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>上次市值：${escapeHtml(formatFieldValue(data.market_cap_previous))} ｜ 本次市值：${escapeHtml(formatFieldValue(data.market_cap))}</div>
+          <div>变化绝对值：${escapeHtml(formatFieldValue(data.market_cap_change_abs))} ｜ 变化百分比：${escapeHtml(formatFieldValue(data.market_cap_change_pct))}</div>
+          <div>数据日期：${escapeHtml(formatFieldValue(data.market_cap_as_of))} ｜ 来源：${escapeHtml(data.market_cap_source)}</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">💰 财务数据</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>收入：${escapeHtml(formatFieldValue(data.revenue))} ｜ 报告期：${escapeHtml(formatFieldValue(data.revenue_period))} ｜ 同比：${escapeHtml(formatFieldValue(data.revenue_yoy))} ｜ 来源：${escapeHtml(data.revenue_source)}</div>
+          <div>利润：${escapeHtml(formatFieldValue(data.net_profit))} ｜ 报告期：${escapeHtml(formatFieldValue(data.profit_period))} ｜ 同比：${escapeHtml(formatFieldValue(data.profit_yoy))} ｜ 来源：${escapeHtml(data.profit_source)}</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🧪 产品销售额</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead><tr class="text-slate-400 text-left"><th class="pr-2 pb-1">产品</th><th class="pr-2 pb-1">销售额</th><th class="pr-2 pb-1">报告期</th><th class="pr-2 pb-1">同比</th><th class="pr-2 pb-1">备注</th><th class="pb-1">来源</th></tr></thead>
+            <tbody>${productsRows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🧬 核心管线</div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead><tr class="text-slate-400 text-left"><th class="pr-2 pb-1">资产</th><th class="pr-2 pb-1">适应症</th><th class="pr-2 pb-1">阶段</th><th class="pr-2 pb-1">最近事件</th><th class="pr-2 pb-1">重要性</th><th class="pb-1">来源</th></tr></thead>
+            <tbody>${pipelineRows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🤖 AI解释</div>
+        <div class="text-xs text-slate-400 mb-1">以下为基于公开信息的分析性判断，不代表官方表述。</div>
+        <div class="text-slate-600 dark:text-slate-300 space-y-0.5">
+          <div>${escapeHtml(formatFieldValue(data.change_explanation))}</div>
+          <div>下一步关注：${escapeHtml(formatFieldValue(data.watch_next))}</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-1">🔗 数据来源</div>
+        <div class="space-y-0.5">${sources}</div>
+      </div>
+    </div>`;
+}
+
 function cardHtml(company, data) {
   const trend = trendMeta(data.market_cap_trend);
   const alerts = companyAlerts[company.name] || [];
   const errorRing = data._error ? 'border-rose-300 dark:border-rose-700' : (alerts.length ? 'border-amber-300 dark:border-amber-600' : 'border-slate-200 dark:border-slate-700');
-  const alertBadges = alerts.length
-    ? `<div class="flex flex-wrap gap-1">${alerts.map(a => `<span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 font-medium">${escapeHtml(a.label)}</span>`).join('')}</div>`
+  const alertBadgesHtml = alerts.map(a => `<span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 font-medium">${escapeHtml(a.label)}</span>`).join('');
+  const qualityPendingBadge = data.data_quality === '待核验'
+    ? `<span class="text-xs px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 font-medium">数据待核验</span>`
     : '';
-  const products = data.top_products.length
-    ? data.top_products.map(p => `<li>${escapeHtml(p)}</li>`).join('')
+  const badgesHtml = (alertBadgesHtml || qualityPendingBadge) ? `<div class="flex flex-wrap gap-1">${alertBadgesHtml}${qualityPendingBadge}</div>` : '';
+  const changeText = (data.market_cap_change_pct && data.market_cap_change_pct !== 'N/A') ? `（较上次 ${data.market_cap_change_pct}）` : '';
+  const products = data.top_products.slice(0, 3).length
+    ? data.top_products.slice(0, 3).map(p => `<li>${escapeHtml(p.name)}${p.sales && p.sales !== 'N/A' ? '：' + escapeHtml(p.sales) : ''}${p.period && p.period !== 'N/A' ? '（' + escapeHtml(p.period) + '）' : ''}</li>`).join('')
     : '<li class="text-slate-400">待确认</li>';
-  const pipeline = data.key_pipeline.length
-    ? data.key_pipeline.map(p => `<li>${escapeHtml(p)}</li>`).join('')
+  const pipeline = data.key_pipeline.slice(0, 3).length
+    ? data.key_pipeline.slice(0, 3).map(p => `<li>${escapeHtml(p.asset)}${p.phase && p.phase !== 'N/A' ? '（' + escapeHtml(p.phase) + '）' : ''}</li>`).join('')
     : '<li class="text-slate-400">待确认</li>';
+  const isExpanded = expandedMarketCompany === company.name;
 
   return `
-    <div class="rounded-xl border ${errorRing} p-4 space-y-2 bg-white dark:bg-slate-800 flex flex-col">
-      ${alertBadges}
+    <div class="rounded-xl border ${errorRing} p-4 space-y-2 bg-white dark:bg-slate-800 flex flex-col" data-market-card="${escapeHtml(company.name)}">
+      ${badgesHtml}
       <div class="flex items-start justify-between gap-2">
         <h3 class="font-bold text-base leading-tight">${escapeHtml(data.display_name)}</h3>
         <span class="text-xs px-2 py-0.5 rounded ${company.group === 'mnc' ? 'bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-300' : 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-300'}">${company.group === 'mnc' ? '国际MNC' : '国内'}</span>
       </div>
-      <div class="text-xl font-extrabold flex items-center gap-1">
+      <div class="text-xl font-extrabold flex items-center gap-1 flex-wrap">
         ${escapeHtml(formatFieldValue(data.market_cap))} <span class="${trend.cls} text-lg">${trend.symbol}</span>
+        <span class="text-sm font-medium ${trend.cls}">${changeText}</span>
       </div>
-      <div class="text-sm text-slate-600 dark:text-slate-300">营收：${escapeHtml(formatFieldValue(data.revenue))}</div>
-      <div class="text-sm text-slate-600 dark:text-slate-300">净利润/EBITDA：${escapeHtml(formatFieldValue(data.net_profit))}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300">收入：${escapeHtml(formatFieldValue(data.revenue))}${data.revenue_period && data.revenue_period !== 'N/A' ? '（' + escapeHtml(data.revenue_period) + '）' : ''}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300">利润：${escapeHtml(formatFieldValue(data.net_profit))}${data.profit_period && data.profit_period !== 'N/A' ? '（' + escapeHtml(data.profit_period) + '）' : ''}</div>
       <div class="text-sm">
         <div class="font-medium text-slate-500 dark:text-slate-400 mb-0.5">Top 产品</div>
         <ul class="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-0.5">${products}</ul>
       </div>
       <div class="text-sm">
-        <div class="font-medium text-slate-500 dark:text-slate-400 mb-0.5">关键管线</div>
+        <div class="font-medium text-slate-500 dark:text-slate-400 mb-0.5">核心管线</div>
         <ul class="list-disc list-inside text-slate-600 dark:text-slate-300 space-y-0.5">${pipeline}</ul>
       </div>
-      <div class="text-sm text-slate-600 dark:text-slate-300 flex-1">${escapeHtml(formatFieldValue(data.summary))}</div>
-      <div class="text-xs text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-700">数据截至：${escapeHtml(formatFieldValue(data.data_as_of))}</div>
+      <div class="text-sm text-slate-600 dark:text-slate-300 flex-1">关注点：${escapeHtml(formatFieldValue(data.market_summary))}</div>
+      <div class="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-700">
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium ${marketDataQualityCls(data.data_quality)}">数据质量：${escapeHtml(data.data_quality)}</span>
+        <button data-market-detail="${escapeHtml(company.name)}" class="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-medium">${isExpanded ? '收起详情' : '🔍 查看详情'}</button>
+      </div>
+      ${isExpanded ? marketDetailBlockHtml(data) : ''}
     </div>`;
 }
 
@@ -1357,7 +1801,7 @@ function emptyStateHtml() {
 function noAlertMatchHtml() {
   return `<div class="col-span-full text-center py-16 text-slate-400">
     <div class="text-4xl mb-2">🔕</div>
-    <div>当前没有命中异动的公司</div>
+    <div>当前没有符合筛选条件的公司</div>
   </div>`;
 }
 
@@ -1369,7 +1813,7 @@ function renderCards() {
     container.innerHTML = emptyStateHtml();
     return;
   }
-  if (alertFilterOnly && list.length === 0) {
+  if ((alertFilterOnly || marketExtraFilter !== 'all' || currentGroupFilter !== 'all') && list.length === 0 && cacheData) {
     container.innerHTML = noAlertMatchHtml();
     return;
   }
@@ -4629,6 +5073,8 @@ function openSettingsPanel() {
   document.getElementById('searchProviderSelect').value = settings.searchProvider;
   document.getElementById('searchApiKeyInput').value = settings.searchApiKey;
   document.getElementById('alertMarketCapPctInput').value = alertRules.marketCapPct;
+  document.getElementById('alertRevenuePctInput').value = alertRules.revenuePct;
+  document.getElementById('alertProfitPctInput').value = alertRules.profitPct;
   document.getElementById('alertProductPctInput').value = alertRules.productSalesPct;
   document.getElementById('alertKeywordsInput').value = alertRules.riskKeywords.join(',');
   document.getElementById('feishuWebhookUrlInput').value = feishuWebhookSettings.url;
@@ -4690,10 +5136,14 @@ function handleSaveSettings() {
 
 function handleSaveAlertRules() {
   const marketCapPct = parseFloat(document.getElementById('alertMarketCapPctInput').value);
+  const revenuePct = parseFloat(document.getElementById('alertRevenuePctInput').value);
+  const profitPct = parseFloat(document.getElementById('alertProfitPctInput').value);
   const productSalesPct = parseFloat(document.getElementById('alertProductPctInput').value);
   const keywords = document.getElementById('alertKeywordsInput').value.split(',').map(s => s.trim()).filter(Boolean);
   alertRules = {
     marketCapPct: (!isNaN(marketCapPct) && marketCapPct >= 0) ? marketCapPct : CONFIG.DEFAULT_ALERT_RULES.marketCapPct,
+    revenuePct: (!isNaN(revenuePct) && revenuePct >= 0) ? revenuePct : CONFIG.DEFAULT_ALERT_RULES.revenuePct,
+    profitPct: (!isNaN(profitPct) && profitPct >= 0) ? profitPct : CONFIG.DEFAULT_ALERT_RULES.profitPct,
     productSalesPct: (!isNaN(productSalesPct) && productSalesPct >= 0) ? productSalesPct : CONFIG.DEFAULT_ALERT_RULES.productSalesPct,
     riskKeywords: keywords.length ? keywords : [...CONFIG.DEFAULT_ALERT_RULES.riskKeywords],
   };
@@ -4789,6 +5239,7 @@ function init() {
   companyAlerts = cacheData?.alerts || {};
   populateProviderPresets();
   populateSearchProviderSelect();
+  populateMarketCompanyScopeSelect();
 
   renderToolbar();
   renderCards();
@@ -4932,6 +5383,19 @@ function init() {
 
   document.getElementById('sortSelect').addEventListener('change', (e) => {
     currentSort = e.target.value;
+    renderCards();
+  });
+
+  document.getElementById('marketExtraFilterSelect').addEventListener('change', (e) => {
+    marketExtraFilter = e.target.value;
+    renderCards();
+  });
+
+  document.getElementById('cardGrid').addEventListener('click', (e) => {
+    const detailBtn = e.target.closest('[data-market-detail]');
+    if (!detailBtn) return;
+    const name = detailBtn.dataset.marketDetail;
+    expandedMarketCompany = expandedMarketCompany === name ? null : name;
     renderCards();
   });
 }
