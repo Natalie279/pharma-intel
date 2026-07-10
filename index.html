@@ -479,6 +479,31 @@
   </div>
 </div>
 
+<!-- ==================== 人工审核弹窗（BD & AI 共用） ==================== -->
+<div id="manualReviewModalOverlay" class="fixed inset-0 bg-black/40 z-50 hidden flex items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h3 class="font-bold">🖊 人工审核</h3>
+      <button id="closeManualReviewModalBtn" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">✕</button>
+    </div>
+    <div id="manualReviewSummary" class="text-sm text-slate-600 dark:text-slate-300"></div>
+    <p class="text-xs text-slate-500 dark:text-slate-400">这条目前仅由二级来源支持。如果你自己判断证据可信、只是日期不确定，可以直接确认日期后标记为已核实；如果你也无法判断，可以改为触发自动反查。</p>
+    <div>
+      <label class="block text-sm font-medium mb-1">确认日期（可选，留空则使用来源发布/事件日期）</label>
+      <input id="manualReviewDateInput" type="date" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">备注（可选）</label>
+      <textarea id="manualReviewNoteInput" rows="2" placeholder="例如：看到公司官方公众号截图、内部已知悉此事等" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm"></textarea>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <button id="manualReviewConfirmBtn" class="flex-1 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium">✅ 证据可信，标记为已核实</button>
+      <button id="manualReviewBackcheckBtn" class="flex-1 py-2 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 text-sm font-medium">🔎 无法判断，去反查</button>
+    </div>
+    <div id="manualReviewStatus" class="text-sm h-5"></div>
+  </div>
+</div>
+
 <script>
 // ==================== 配置区：集中管理公司列表 / 字段 / 批次等 ====================
 const CONFIG = {
@@ -564,7 +589,7 @@ const CONFIG = {
   // ---- 信源可信度分层（BD / AI合作共用） ----
   SOURCE_TIERS: ['T1', 'T1.5', 'T2', 'Unknown'],
   SOURCE_TIER_PRIORITY: ['T1', 'T1.5', 'T2', 'Unknown'],
-  REVIEW_STATUSES: ['已由官方来源确认', '准官方来源确认', '仅T2线索待核验', '来源不足', '手动导入待核验'],
+  REVIEW_STATUSES: ['已由官方来源确认', '准官方来源确认', '仅T2线索待核验', '来源不足', '手动导入待核验', '人工已核实'],
   SOURCE_ORIGINS: ['primary_search', 't2_lead', 'manual_import', 'official_backcheck', 'official_social', 'founder_social', 'kol_social'],
   // 手动搜索范围覆盖选项（days=null 表示自动/自适应）
   LOOKBACK_OVERRIDE_OPTIONS: [
@@ -2904,15 +2929,25 @@ async function handleBdBackcheck(dealId) {
       };
       diag.originStats.official_backcheck += 1;
       if (tier === 'T1') diag.backcheckStats.upgradedToT1 += 1; else diag.backcheckStats.upgradedToT15 += 1;
+      bdCacheData.deals[idx].backcheck_last_result = 'upgraded';
+      bdCacheData.deals[idx].backcheck_last_at = new Date().toISOString();
+      bdCacheData.deals[idx].backcheck_last_error = null;
     } else {
       diag.backcheckStats.stillT2 += 1;
       const missing = new Set(deal.missing_info || []);
       missing.add('缺少官方来源');
-      bdCacheData.deals[idx] = { ...deal, missing_info: [...missing] };
+      bdCacheData.deals[idx] = {
+        ...deal, missing_info: [...missing],
+        backcheck_last_result: 'not_found', backcheck_last_at: new Date().toISOString(), backcheck_last_error: null,
+      };
     }
   } catch (err) {
     diag.backcheckStats.failedBackcheck += 1;
     bdErrorMessages.push(`反查官方来源失败：${err.message}`);
+    bdCacheData.deals[idx] = {
+      ...bdCacheData.deals[idx],
+      backcheck_last_result: 'error', backcheck_last_at: new Date().toISOString(), backcheck_last_error: err.message,
+    };
   }
   saveBdCacheToStorage(bdCacheData);
   bdBackcheckLoadingId = null;
@@ -3210,9 +3245,15 @@ function dealCardHtml(deal) {
         : (deal.source_url === 'manual_import' ? '<div class="text-xs text-slate-400 mt-1">来源：手动导入，需自行核验原文出处。</div>' : '')}
       ${deal.source_origin === 'manual_import' ? '<div class="text-xs text-slate-400 mt-1">该条目来自手动导入文章，系统未自动抓取原文，请自行核验来源。</div>' : ''}
       ${deal.source_origin === 'official_backcheck' ? '<div class="text-xs text-emerald-600 dark:text-emerald-400 mt-1">✅ 已根据 T2 线索反查到官方/准官方来源。</div>' : ''}
+      ${deal.manual_verified ? `<div class="text-xs text-sky-600 dark:text-sky-400 mt-1">🖊 人工已核实（${formatDateTime(deal.manual_verified_at)}）｜确认日期：${escapeHtml(deal.confirmed_event_date || 'N/A')}（${escapeHtml(deal.confirmed_event_date_basis || 'N/A')}）${deal.manual_verified_note ? '｜备注：' + escapeHtml(deal.manual_verified_note) : ''}</div>` : ''}
       ${needsBackcheck ? `
         <div class="text-xs text-amber-600 dark:text-amber-400 mt-1">该条目目前仅由二级来源支持，建议反查官方公告后再引用。</div>
-        <button data-bd-backcheck="${escapeHtml(deal.deal_id)}" ${isBackchecking ? 'disabled' : ''} class="mt-1 text-xs px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 font-medium disabled:opacity-50">${isBackchecking ? '⏳ 反查中…' : '🔎 反查官方来源'}</button>
+        ${deal.backcheck_last_result === 'not_found' ? `<div class="text-xs text-slate-400 mt-1">🔎 已反查（${formatDateTime(deal.backcheck_last_at)}）：未找到官方/准官方来源，仍为二级线索。</div>` : ''}
+        ${deal.backcheck_last_result === 'error' ? `<div class="text-xs text-rose-500 mt-1">🔎 反查失败（${formatDateTime(deal.backcheck_last_at)}）：${escapeHtml(deal.backcheck_last_error || '')}</div>` : ''}
+        <div class="mt-1 flex flex-wrap gap-2">
+          <button data-bd-backcheck="${escapeHtml(deal.deal_id)}" ${isBackchecking ? 'disabled' : ''} class="text-xs px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 font-medium disabled:opacity-50">${isBackchecking ? '⏳ 反查中…' : '🔎 反查官方来源'}</button>
+          <button data-bd-manual-review="${escapeHtml(deal.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-sky-300 dark:border-sky-600 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-900/30 font-medium">🖊 人工审核</button>
+        </div>
       ` : ''}
       ${isExpanded ? dealDetailBlockHtml(deal.deal_id) : ''}
     </div>`;
@@ -4050,15 +4091,25 @@ async function handleAiBackcheck(collabId) {
       };
       diag.originStats.official_backcheck += 1;
       if (tier === 'T1') diag.backcheckStats.upgradedToT1 += 1; else diag.backcheckStats.upgradedToT15 += 1;
+      aiCollabCacheData.collaborations[idx].backcheck_last_result = 'upgraded';
+      aiCollabCacheData.collaborations[idx].backcheck_last_at = new Date().toISOString();
+      aiCollabCacheData.collaborations[idx].backcheck_last_error = null;
     } else {
       diag.backcheckStats.stillT2 += 1;
       const missing = new Set(collab.missing_info || []);
       missing.add('缺少官方来源');
-      aiCollabCacheData.collaborations[idx] = { ...collab, missing_info: [...missing] };
+      aiCollabCacheData.collaborations[idx] = {
+        ...collab, missing_info: [...missing],
+        backcheck_last_result: 'not_found', backcheck_last_at: new Date().toISOString(), backcheck_last_error: null,
+      };
     }
   } catch (err) {
     diag.backcheckStats.failedBackcheck += 1;
     aiErrorMessages.push(`反查官方来源失败：${err.message}`);
+    aiCollabCacheData.collaborations[idx] = {
+      ...aiCollabCacheData.collaborations[idx],
+      backcheck_last_result: 'error', backcheck_last_at: new Date().toISOString(), backcheck_last_error: err.message,
+    };
   }
   saveAiCollabCacheToStorage(aiCollabCacheData);
   aiBackcheckLoadingId = null;
@@ -4106,6 +4157,75 @@ function updateAiBatchBackcheckButtonState() {
     ? `⏳ 批量反查中（${aiBatchBackcheckProgress.current}/${aiBatchBackcheckProgress.total}）`
     : `🔎 批量反查待核验线索${targets.length ? '（' + targets.length + ' 条）' : ''}`;
   syncRefreshButtonsDisabled();
+}
+
+// ==================== 人工审核（BD & AI 共用） ====================
+// 人工审核是「🔎 反查官方来源」之外的另一条路径：反查依赖搜索API+LLM判断，可能超时/限流/确实没搜到；
+// 人工审核让用户凭自己的判断直接处理，对应两个决策/两个按钮：
+// ① 证据本身可信，只是日期不明确 -> 人工确认日期（留空则回退到来源发布日期/事件日期）后标记为"人工已核实"；
+//    注意：这里不改动 source_tier/source_url——人工核实是独立于"反查找到官方文档"的另一种信号，不能混为一谈；
+// ② 无法直接判断 -> 复用已有的 handleBdBackcheck()/handleAiBackcheck()，不重新实现反查本身
+let manualReviewTarget = null; // { type: 'bd' | 'ai', id: string } | null
+
+function findManualReviewRecord() {
+  if (!manualReviewTarget) return null;
+  if (manualReviewTarget.type === 'bd') return (bdCacheData?.deals || []).find(d => d.deal_id === manualReviewTarget.id) || null;
+  return (aiCollabCacheData?.collaborations || []).find(c => c.deal_id === manualReviewTarget.id) || null;
+}
+
+function openManualReviewModal(type, id) {
+  manualReviewTarget = { type, id };
+  const record = findManualReviewRecord();
+  if (!record) { manualReviewTarget = null; return; }
+  document.getElementById('manualReviewSummary').textContent = type === 'bd'
+    ? `${record.pharma} × ${record.partner}｜${record.deal_type}｜${formatFieldValue(record.asset)}`
+    : `${record.pharma} × ${record.ai_partner}｜${record.direction}｜${formatFieldValue(record.headline)}`;
+  document.getElementById('manualReviewDateInput').value = isKnownDateString(record.confirmed_event_date) ? record.confirmed_event_date : '';
+  document.getElementById('manualReviewNoteInput').value = record.manual_verified_note || '';
+  document.getElementById('manualReviewStatus').textContent = '';
+  document.getElementById('manualReviewModalOverlay').classList.remove('hidden');
+  document.getElementById('manualReviewModalOverlay').classList.add('flex');
+}
+
+function closeManualReviewModal() {
+  document.getElementById('manualReviewModalOverlay').classList.add('hidden');
+  document.getElementById('manualReviewModalOverlay').classList.remove('flex');
+  manualReviewTarget = null;
+}
+
+// 决策①：证据本身可信 -> 人工确认（或留空回退）日期后标记为已核实
+function handleManualReviewConfirm() {
+  const record = findManualReviewRecord();
+  if (!record || !manualReviewTarget) return;
+  const dateInput = document.getElementById('manualReviewDateInput').value.trim();
+  const note = document.getElementById('manualReviewNoteInput').value.trim();
+  const fallbackDate = isKnownDateString(record.source_published_date) ? record.source_published_date
+    : (isKnownDateString(record.event_date) ? record.event_date : 'N/A');
+
+  record.manual_verified = true;
+  record.manual_verified_at = new Date().toISOString();
+  record.manual_verified_note = note || null;
+  record.confirmed_event_date = isKnownDateString(dateInput) ? dateInput : fallbackDate;
+  record.confirmed_event_date_basis = isKnownDateString(dateInput) ? '人工确认' : '内容发布日期（未人工确认交易日期）';
+  record.review_status = '人工已核实';
+
+  if (manualReviewTarget.type === 'bd') {
+    saveBdCacheToStorage(bdCacheData);
+    renderBdDealList();
+  } else {
+    saveAiCollabCacheToStorage(aiCollabCacheData);
+    renderAiCollabCards();
+  }
+  closeManualReviewModal();
+}
+
+// 决策②：人工也无法直接判断 -> 触发已有的自动反查流程
+function handleManualReviewBackcheck() {
+  if (!manualReviewTarget) return;
+  const { type, id } = manualReviewTarget;
+  closeManualReviewModal();
+  if (type === 'bd') handleBdBackcheck(id);
+  else handleAiBackcheck(id);
 }
 
 // ==================== AI合作：粘贴原文解析 ====================
@@ -4320,10 +4440,14 @@ function aiCollabCardHtml(collab) {
       ${hasSourceUrl ? `<a href="${escapeHtml(collab.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-1 inline-block truncate max-w-full">${escapeHtml(collab.source_url)}</a>` : ''}
       ${collab.source_origin === 'manual_import' ? '<div class="text-xs text-slate-400 mt-1">该条目来自手动导入文章，系统未自动抓取原文，请自行核验来源。</div>' : ''}
       ${collab.source_origin === 'official_backcheck' ? '<div class="text-xs text-emerald-600 dark:text-emerald-400 mt-1">✅ 已根据 T2 线索反查到官方/准官方来源。</div>' : ''}
+      ${collab.manual_verified ? `<div class="text-xs text-sky-600 dark:text-sky-400 mt-1">🖊 人工已核实（${formatDateTime(collab.manual_verified_at)}）｜确认日期：${escapeHtml(collab.confirmed_event_date || 'N/A')}（${escapeHtml(collab.confirmed_event_date_basis || 'N/A')}）${collab.manual_verified_note ? '｜备注：' + escapeHtml(collab.manual_verified_note) : ''}</div>` : ''}
       ${needsBackcheck ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">该条目目前仅由二级来源支持，建议反查官方来源后再引用。</div>` : ''}
+      ${collab.backcheck_last_result === 'not_found' ? `<div class="text-xs text-slate-400 mt-1">🔎 已反查（${formatDateTime(collab.backcheck_last_at)}）：未找到官方/准官方来源，仍为二级线索。</div>` : ''}
+      ${collab.backcheck_last_result === 'error' ? `<div class="text-xs text-rose-500 mt-1">🔎 反查失败（${formatDateTime(collab.backcheck_last_at)}）：${escapeHtml(collab.backcheck_last_error || '')}</div>` : ''}
       <div class="mt-2 flex flex-wrap gap-2">
         <button data-ai-deep-dive="${escapeHtml(collab.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 font-medium self-start">🔍 深挖分析</button>
         ${needsBackcheck ? `<button data-ai-backcheck="${escapeHtml(collab.deal_id)}" ${isBackchecking ? 'disabled' : ''} class="text-xs px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-600 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 font-medium disabled:opacity-50 self-start">${isBackchecking ? '⏳ 反查中…' : '🔎 反查官方来源'}</button>` : ''}
+        ${needsBackcheck ? `<button data-ai-manual-review="${escapeHtml(collab.deal_id)}" class="text-xs px-3 py-1.5 rounded-lg border border-sky-300 dark:border-sky-600 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-900/30 font-medium self-start">🖊 人工审核</button>` : ''}
       </div>
       ${isExpanded ? aiCollabDetailBlockHtml(collab.deal_id) : ''}
     </div>`;
@@ -4538,20 +4662,23 @@ const PUSH_HIGH_BD_DEAL_TYPES = ['并购', '资产收购', 'License-in', 'Licens
 const PUSH_HIGH_BD_SOURCE_TYPES = ['公司公告', '交易对手方公告', '监管/交易所公告'];
 const PUSH_HIGH_BD_STAGES = ['Ph2', 'Ph3', 'Approved', 'Commercial'];
 
-// 判断一条 BD 交易的推送优先级：先过纳入门槛（不满足返回 null，即不进入飞书），再区分 high/medium
+// 判断一条 BD 交易的推送优先级：先过纳入门槛（不满足返回 null，即不进入飞书"必须关注/值得浏览"两档），再区分 high/medium。
+// 只有真正的一级/准一级来源（T1/T1.5）才能进入这两档——T2/Unknown 一律排除，即使人工已核实也不例外：
+// 人工核实是"这条线索值得深挖"的信号，不等于"官方来源确认"，走独立的"待确认线索"分档（见 inferBdPushUnconfirmedEligible）
 function inferBdPushPriority(deal) {
   if (!deal) return null;
+  if (deal.source_tier !== 'T1' && deal.source_tier !== 'T1.5') return null;
   if (!deal.pharma || deal.pharma === 'N/A' || !deal.partner || deal.partner === 'N/A') return null;
   if (!deal.deal_type || deal.deal_type === 'N/A') return null;
   const hasSourceUrl = deal.source_url && deal.source_url !== 'N/A' && deal.source_url !== 'manual_import';
-  const officialSource = PUSH_HIGH_BD_SOURCE_TYPES.includes(deal.source_type);
-  if (!hasSourceUrl && !officialSource) return null;
+  if (!hasSourceUrl) return null;
   if (deal.evidence_level === '低') return null;
   if (!deal.date || deal.date === 'N/A') return null;
   // 无明确标的的"战略合作"视为泛合作，不进入推送（普通供应/CDMO协议在提取阶段本就不会被标为BD交易类型）
   const vagueCollab = deal.deal_type === '战略合作' && (!deal.asset || deal.asset === 'N/A' || deal.asset === '未披露');
   if (vagueCollab) return null;
 
+  const officialSource = PUSH_HIGH_BD_SOURCE_TYPES.includes(deal.source_type);
   const highSignals = [
     PUSH_HIGH_BD_DEAL_TYPES.includes(deal.deal_type),
     officialSource,
@@ -4564,28 +4691,62 @@ function inferBdPushPriority(deal) {
   return null;
 }
 
+// "待确认线索"分档：仅当人工已核实（manual_verified）且反查后仍停留在 T2/Unknown（没有真正的官方来源）时才考虑；
+// 且必须同时满足"otherwise重要"的信号，避免把所有手动审核过的条目都塞进推送
+function inferBdPushUnconfirmedEligible(deal) {
+  if (!deal || !deal.manual_verified) return false;
+  if (deal.source_tier === 'T1' || deal.source_tier === 'T1.5') return false; // 已经真正确认了，走上面的 high/medium 路径
+  if (!deal.pharma || deal.pharma === 'N/A' || !deal.partner || deal.partner === 'N/A') return false;
+  if (!deal.deal_type || deal.deal_type === 'N/A') return false;
+  const importantSignals = [
+    PUSH_HIGH_BD_DEAL_TYPES.includes(deal.deal_type),
+    PUSH_HIGH_BD_STAGES.includes(deal.stage),
+    (deal.upfront && deal.upfront !== 'N/A') || (deal.total_value && deal.total_value !== 'N/A'),
+    isMncCompanyName(deal.pharma) && looksLikeChinaOrBiotechPartner(deal.partner),
+  ];
+  return importantSignals.some(Boolean);
+}
+
+// 综合分档：先看能不能进入 high/medium（真正确认），不行再看能不能进入"待确认线索"（人工核实但仍缺官方来源）
+function inferBdPushBucket(deal) {
+  return inferBdPushPriority(deal) || (inferBdPushUnconfirmedEligible(deal) ? 'unconfirmed' : null);
+}
+
 const PUSH_HIGH_AI_DIRECTIONS = ['药物发现', '临床试验AI', '医学影像', '真实世界数据', '生成式AI', '数据/平台基础设施'];
-const PUSH_STRONG_AI_SOURCE_TYPES = ['公司公告', 'AI合作方公告', '合作方官网', '论文/会议'];
 const PUSH_HIGH_AI_SOURCE_TYPES = ['公司公告', 'AI合作方公告', '合作方官网'];
 
+// 同 inferBdPushPriority：只有 T1/T1.5 才能进入 high/medium，T2/Unknown 一律走"待确认线索"分档
 function inferAiPushPriority(collab) {
   if (!collab) return null;
+  if (collab.source_tier !== 'T1' && collab.source_tier !== 'T1.5') return null;
   if (!collab.pharma || collab.pharma === 'N/A' || !collab.ai_partner || collab.ai_partner === 'N/A') return null;
   if (!collab.direction || collab.direction === 'N/A' || collab.direction === '其他') return null;
   if (!collab.headline || collab.headline === 'N/A') return null;
   if (collab.evidence_level === '低') return null;
   const hasSourceUrl = collab.source_url && collab.source_url !== 'N/A' && collab.source_url !== 'manual_import';
-  const strongSource = PUSH_STRONG_AI_SOURCE_TYPES.includes(collab.source_type);
-  if (!hasSourceUrl && !strongSource) return null;
+  if (!hasSourceUrl) return null;
 
   const isHigh = isMncCompanyName(collab.pharma)
     && PUSH_HIGH_AI_SOURCE_TYPES.includes(collab.source_type)
     && PUSH_HIGH_AI_DIRECTIONS.includes(collab.direction);
   if (isHigh) return 'high';
-  return 'medium'; // 能走到这里说明已满足最低纳入门槛（双方 + 明确方向 + headline + 可靠来源）
+  return 'medium'; // 能走到这里说明已满足最低纳入门槛（双方 + 明确方向 + headline + 可靠来源 + 官方tier）
 }
 
-// 市值/财务异动：detectAlerts() 产出的每一类异动本身都已经过阈值过滤，命中即视为 high；无异动的公司不进入推送
+// "待确认线索"分档：人工已核实但反查后仍是 T2/Unknown，且方向/合作方看起来足够重要
+function inferAiPushUnconfirmedEligible(collab) {
+  if (!collab || !collab.manual_verified) return false;
+  if (collab.source_tier === 'T1' || collab.source_tier === 'T1.5') return false;
+  if (!collab.pharma || collab.pharma === 'N/A' || !collab.ai_partner || collab.ai_partner === 'N/A') return false;
+  if (!collab.direction || collab.direction === 'N/A' || collab.direction === '其他') return false;
+  return isMncCompanyName(collab.pharma) || PUSH_HIGH_AI_DIRECTIONS.includes(collab.direction);
+}
+
+function inferAiPushBucket(collab) {
+  return inferAiPushPriority(collab) || (inferAiPushUnconfirmedEligible(collab) ? 'unconfirmed' : null);
+}
+
+// 市值/财务异动：detectMarketAlerts() 产出的每一类异动本身都已经过阈值过滤，命中即视为 high；无异动的公司不进入推送
 function inferAlertPushPriority(companyName, alerts) {
   return (alerts && alerts.length) ? 'high' : null;
 }
@@ -4618,12 +4779,18 @@ function generateSelectionReason(category, rawRef) {
 
 // ==================== 飞书推送：候选构建 ====================
 
+// 待确认线索的推送提示：说明它为什么会出现在这里（人工判断 + 尚无官方来源），而不是被当成已确认事实
+function buildUnconfirmedNote(record) {
+  const noteText = record.manual_verified_note ? `人工备注：${record.manual_verified_note}。` : '';
+  return `⚠️ 尚未找到官方来源，来自人工核实的二级线索。${noteText}请自行判断是否值得深挖。`;
+}
+
 function buildBdPushItem(deal) {
-  const priority = inferBdPushPriority(deal);
+  const priority = inferBdPushBucket(deal);
   if (!priority) return null;
   const stageText = PUSH_HIGH_BD_STAGES.includes(deal.stage) ? `｜${deal.stage}资产` : '';
   const assetText = (deal.asset && deal.asset !== 'N/A' && deal.asset !== '未披露') ? deal.asset : '相关资产';
-  return {
+  const item = {
     id: `bd_${deal.deal_id}`,
     category: 'BD&并购',
     priority,
@@ -4636,13 +4803,15 @@ function buildBdPushItem(deal) {
     detail_anchor: null,
     raw_ref: deal,
   };
+  if (priority === 'unconfirmed') item.unconfirmed_note = buildUnconfirmedNote(deal);
+  return item;
 }
 
 function buildAiPushItem(collab) {
-  const priority = inferAiPushPriority(collab);
+  const priority = inferAiPushBucket(collab);
   if (!priority) return null;
   const oneLiner = (collab.headline && collab.headline !== 'N/A') ? collab.headline : `${collab.pharma} 与 ${collab.ai_partner} 开展 ${collab.direction} 合作。`;
-  return {
+  const item = {
     id: `ai_${collab.deal_id}`,
     category: 'AI合作',
     priority,
@@ -4655,6 +4824,8 @@ function buildAiPushItem(collab) {
     detail_anchor: null,
     raw_ref: collab,
   };
+  if (priority === 'unconfirmed') item.unconfirmed_note = buildUnconfirmedNote(collab);
+  return item;
 }
 
 function buildAlertPushItem(companyName, alerts) {
@@ -4721,7 +4892,7 @@ function buildPushCandidates(options) {
     }
   }
 
-  const priorityRank = { high: 0, medium: 1 };
+  const priorityRank = { high: 0, medium: 1, unconfirmed: 2 };
   items.sort((a, b) => {
     const pr = priorityRank[a.priority] - priorityRank[b.priority];
     if (pr !== 0) return pr;
@@ -4753,11 +4924,13 @@ function feishuItemBlock(item, index) {
     lines.push(`    为什么重要：${item.why_it_matters.join(' / ')}`);
   }
   lines.push(`    来源：${item.source_label}${item.source_url ? '（' + item.source_url + '）' : ''}`);
+  if (item.unconfirmed_note) lines.push(`    ${item.unconfirmed_note}`);
   return lines.join('\n');
 }
 
-// 纯文本飞书文案：只区分"一、必须关注"（high）与"二、值得浏览"（medium）；没有 high 时省略第一段标题，
-// 完全没有候选时用统一的空状态文案兜底；末尾始终附看板链接
+// 纯文本飞书文案：分三档——"一、必须关注"（high）、"二、值得浏览"（medium）、
+// "三、待确认线索"（unconfirmed：人工已核实但反查后仍无官方来源，供读者自行判断是否值得深挖）。
+// 没有 high 时省略第一段标题，完全没有候选时用统一的空状态文案兜底；末尾始终附看板链接
 function generateFeishuPushText(candidates, options) {
   const opts = options || {};
   const periodMode = opts.periodMode || pushPeriodMode;
@@ -4770,6 +4943,7 @@ function generateFeishuPushText(candidates, options) {
   const list = candidates || [];
   const highItems = list.filter(i => i.priority === 'high');
   const mediumItems = list.filter(i => i.priority === 'medium');
+  const unconfirmedItems = list.filter(i => i.priority === 'unconfirmed');
 
   const lines = [`【Pharma 情报｜${periodLabel}】`, `覆盖时间：${coverageText}`, ''];
 
@@ -4784,6 +4958,11 @@ function generateFeishuPushText(candidates, options) {
     if (mediumItems.length) {
       lines.push('二、值得浏览', '');
       mediumItems.forEach((item, i) => lines.push(feishuItemBlock(item, i + 1)));
+      lines.push('');
+    }
+    if (unconfirmedItems.length) {
+      lines.push('三、待确认线索（未找到官方来源，供参考）', '');
+      unconfirmedItems.forEach((item, i) => lines.push(feishuItemBlock(item, i + 1)));
       lines.push('');
     }
   }
@@ -4803,7 +4982,8 @@ function refreshPushCandidates() {
     categoryToggles: pushCategoryToggles,
     maxItems: pushMaxItems,
   });
-  pushSelectedIds = new Set(pushCandidates.filter(i => !i.already_pushed).map(i => i.id));
+  // "待确认线索"默认不勾选——它们是"人工核实但仍缺官方来源"的低置信度候选，需要用户主动选择才会进入文案
+  pushSelectedIds = new Set(pushCandidates.filter(i => !i.already_pushed && i.priority !== 'unconfirmed').map(i => i.id));
   handleRegeneratePushText();
   renderPushCandidates();
 }
@@ -4847,6 +5027,7 @@ function pushCandidateCardHtml(item) {
         ${reasons ? `<div class="text-xs text-slate-400 mt-0.5">为什么重要：${escapeHtml(reasons)}</div>` : ''}
         <div class="text-xs text-slate-400 mt-0.5">来源：${escapeHtml(item.source_label)}</div>
         ${item.source_url ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 dark:text-indigo-400 underline mt-0.5 inline-block truncate max-w-full">${escapeHtml(item.source_url)}</a>` : ''}
+        ${item.unconfirmed_note ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-0.5">${escapeHtml(item.unconfirmed_note)}</div>` : ''}
       </div>
     </label>`;
 }
@@ -4864,6 +5045,7 @@ function renderPushCandidates() {
   if (!pushCandidates.length) { container.innerHTML = pushEmptyStateHtml(); return; }
   const highItems = pushCandidates.filter(i => i.priority === 'high');
   const mediumItems = pushCandidates.filter(i => i.priority === 'medium');
+  const unconfirmedItems = pushCandidates.filter(i => i.priority === 'unconfirmed');
   const groupHtml = (label, items) => {
     if (!items.length) return '';
     return `<div>
@@ -4871,7 +5053,9 @@ function renderPushCandidates() {
       <div class="space-y-2 mb-3">${items.map(pushCandidateCardHtml).join('')}</div>
     </div>`;
   };
-  container.innerHTML = groupHtml('🔴 一、必须关注（high）', highItems) + groupHtml('🟡 二、值得浏览（medium）', mediumItems);
+  container.innerHTML = groupHtml('🔴 一、必须关注（high）', highItems)
+    + groupHtml('🟡 二、值得浏览（medium）', mediumItems)
+    + groupHtml('🔵 三、待确认线索（unconfirmed，默认不勾选）', unconfirmedItems);
 }
 
 function renderPushHistory() {
@@ -5278,7 +5462,9 @@ function init() {
     const deepDiveBtn = e.target.closest('[data-deep-dive]');
     if (deepDiveBtn) { handleDeepDive(deepDiveBtn.dataset.deepDive, false); return; }
     const backcheckBtn = e.target.closest('[data-bd-backcheck]');
-    if (backcheckBtn) handleBdBackcheck(backcheckBtn.dataset.bdBackcheck);
+    if (backcheckBtn) { handleBdBackcheck(backcheckBtn.dataset.bdBackcheck); return; }
+    const manualReviewBtn = e.target.closest('[data-bd-manual-review]');
+    if (manualReviewBtn) openManualReviewModal('bd', manualReviewBtn.dataset.bdManualReview);
   });
 
   // AI合作板块：页面加载时只读缓存展示，不自动调用 LLM
@@ -5296,6 +5482,10 @@ function init() {
   document.getElementById('aiBatchBackcheckBtn').addEventListener('click', handleAiBatchBackcheck);
   document.getElementById('closeAiPasteModalBtn').addEventListener('click', closeAiPasteModal);
   document.getElementById('aiPasteParseSubmitBtn').addEventListener('click', handleAiPasteParseSubmit);
+
+  document.getElementById('closeManualReviewModalBtn').addEventListener('click', closeManualReviewModal);
+  document.getElementById('manualReviewConfirmBtn').addEventListener('click', handleManualReviewConfirm);
+  document.getElementById('manualReviewBackcheckBtn').addEventListener('click', handleManualReviewBackcheck);
   document.getElementById('aiCompanyFilter').addEventListener('change', (e) => { aiFilterCompany = e.target.value; renderAiCollabCards(); });
   document.getElementById('aiDirectionFilter').addEventListener('change', (e) => { aiFilterDirection = e.target.value; renderAiCollabCards(); });
   document.getElementById('aiEvidenceFilter').addEventListener('change', (e) => { aiFilterEvidenceLevel = e.target.value; renderAiCollabCards(); });
@@ -5308,7 +5498,9 @@ function init() {
     const deepDiveBtn = e.target.closest('[data-ai-deep-dive]');
     if (deepDiveBtn) { handleAiDeepDive(deepDiveBtn.dataset.aiDeepDive, false); return; }
     const backcheckBtn = e.target.closest('[data-ai-backcheck]');
-    if (backcheckBtn) handleAiBackcheck(backcheckBtn.dataset.aiBackcheck);
+    if (backcheckBtn) { handleAiBackcheck(backcheckBtn.dataset.aiBackcheck); return; }
+    const manualReviewBtn = e.target.closest('[data-ai-manual-review]');
+    if (manualReviewBtn) openManualReviewModal('ai', manualReviewBtn.dataset.aiManualReview);
   });
 
   // 飞书推送板块：页面加载时只读缓存展示（推送记录/Webhook配置），候选与文案要等用户切到该 Tab 才计算
