@@ -100,17 +100,17 @@
   </div>
 
   <div id="marketSearchProgress" class="hidden mb-4 rounded-lg border border-indigo-200 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-900/20 p-4">
-    <div class="flex items-start justify-between gap-3">
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
       <div>
         <div id="marketSearchProgressText" class="text-sm font-semibold text-slate-700 dark:text-slate-200">正在更新市值数据</div>
         <div id="marketSearchMeta" class="mt-1 text-xs text-slate-500 dark:text-slate-400"></div>
       </div>
-      <div class="flex items-center gap-2 shrink-0">
+      <div class="flex items-center gap-2 flex-wrap sm:justify-end shrink-0">
         <button id="marketPauseResumeBtn" class="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-600 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700">处理完当前公司后暂停</button>
         <button id="marketStopBtn" class="px-2.5 py-1 rounded border border-rose-300 dark:border-rose-600 text-xs text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30">停止</button>
       </div>
     </div>
-    <div id="marketSearchStages" class="mt-3 text-xs text-slate-500 dark:text-slate-400"></div>
+    <div id="marketSearchStages" class="mt-3 flex flex-wrap items-center gap-1 text-xs text-slate-500 dark:text-slate-400"></div>
     <div class="mt-2 w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
       <div id="marketSearchProgressBar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 0%"></div>
     </div>
@@ -171,17 +171,17 @@
   </div>
 
   <div id="bdSearchProgress" class="hidden mb-4 rounded-lg border border-indigo-200 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-900/20 p-4">
-    <div class="flex items-start justify-between gap-3">
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
       <div>
         <div id="bdSearchProgressText" class="text-sm font-semibold text-slate-700 dark:text-slate-200">正在搜索 BD&并购</div>
         <div id="bdSearchMeta" class="mt-1 text-xs text-slate-500 dark:text-slate-400"></div>
       </div>
-      <div class="flex items-center gap-2 shrink-0">
+      <div class="flex items-center gap-2 flex-wrap sm:justify-end shrink-0">
         <button id="bdPauseResumeBtn" class="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-600 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700">处理完当前公司后暂停</button>
         <button id="bdStopBtn" class="px-2.5 py-1 rounded border border-rose-300 dark:border-rose-600 text-xs text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30">停止</button>
       </div>
     </div>
-    <div id="bdSearchStages" class="mt-3 text-xs text-slate-500 dark:text-slate-400"></div>
+    <div id="bdSearchStages" class="mt-3 flex flex-wrap items-center gap-1 text-xs text-slate-500 dark:text-slate-400"></div>
     <div class="mt-2 w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
       <div id="bdSearchProgressBar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 0%"></div>
     </div>
@@ -247,17 +247,17 @@
   </div>
 
   <div id="aiSearchProgress" class="hidden mb-4 rounded-lg border border-indigo-200 dark:border-indigo-700 bg-indigo-50/60 dark:bg-indigo-900/20 p-4">
-    <div class="flex items-start justify-between gap-3">
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
       <div>
         <div id="aiSearchProgressText" class="text-sm font-semibold text-slate-700 dark:text-slate-200">正在搜索 AI 合作</div>
         <div id="aiSearchMeta" class="mt-1 text-xs text-slate-500 dark:text-slate-400"></div>
       </div>
-      <div class="flex items-center gap-2 shrink-0">
+      <div class="flex items-center gap-2 flex-wrap sm:justify-end shrink-0">
         <button id="aiPauseResumeBtn" class="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-600 text-xs text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700">处理完当前公司后暂停</button>
         <button id="aiStopBtn" class="px-2.5 py-1 rounded border border-rose-300 dark:border-rose-600 text-xs text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/30">停止</button>
       </div>
     </div>
-    <div id="aiSearchStages" class="mt-3 text-xs text-slate-500 dark:text-slate-400"></div>
+    <div id="aiSearchStages" class="mt-3 flex flex-wrap items-center gap-1 text-xs text-slate-500 dark:text-slate-400"></div>
     <div class="mt-2 w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
       <div id="aiSearchProgressBar" class="h-full bg-indigo-500 transition-all duration-300" style="width: 0%"></div>
     </div>
@@ -402,7 +402,7 @@
         <select id="searchProviderSelect" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm mb-2"></select>
         <label class="block text-sm font-medium mb-1">搜索 API Key</label>
         <input id="searchApiKeyInput" type="password" placeholder="留空则不启用真实搜索增强" class="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
-        <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">仅用于「BD&并购」板块：填写后，搜交易前会先用你选的搜索服务商对每家目标公司做真实网页搜索，把搜到的标题/链接/摘要喂给大模型作为依据，减少编造交易和虚构链接；不填则维持原来完全依赖大模型自身知识/联网能力的方式。20家公司约需20次搜索请求，注意各家的免费额度。</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">用于市值与财务、BD&并购和 AI合作板块的搜索增强。填写后，系统会先检索公开网页，再把标题、链接和摘要交给大模型分析；未填写时仅依赖模型自身能力。每家公司可能执行多条查询，请留意服务商额度。</div>
       </div>
       <button id="saveSettingsBtn" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">保存设置</button>
       <div id="saveSettingsStatus" class="text-sm h-5"></div>
@@ -1862,11 +1862,12 @@ function syncRefreshButtonsDisabled() {
   const bdBusy = (bdIsLoading && !bdIsPaused) || bdBatchBackcheckLoading;
   const aiBusy = (aiIsLoading && !aiIsPaused) || aiBatchBackcheckLoading;
   document.getElementById('refreshBtn').disabled = marketBusy || bdBusy || aiBusy;
-  document.getElementById('marketClearBtn').disabled = marketBusy || bdBusy || aiBusy;
+  const anyDataTaskRunning = isLoading || bdIsLoading || aiIsLoading || bdBatchBackcheckLoading || aiBatchBackcheckLoading;
+  document.getElementById('marketClearBtn').disabled = anyDataTaskRunning;
   document.getElementById('bdRefreshBtn').disabled = marketBusy || aiBusy;
   document.getElementById('aiRefreshBtn').disabled = marketBusy || bdBusy;
-  document.getElementById('bdClearRefreshBtn').disabled = marketBusy || bdBusy || aiBusy;
-  document.getElementById('aiClearRefreshBtn').disabled = marketBusy || bdBusy || aiBusy;
+  document.getElementById('bdClearRefreshBtn').disabled = anyDataTaskRunning;
+  document.getElementById('aiClearRefreshBtn').disabled = anyDataTaskRunning;
   const bdBatchBtn = document.getElementById('bdBatchBackcheckBtn');
   if (bdBatchBtn) bdBatchBtn.disabled = bdBatchBackcheckLoading || bdIsLoading || marketBusy || aiBusy || !getBdBackcheckTargets().length;
   const aiBatchBtn = document.getElementById('aiBatchBackcheckBtn');
@@ -2166,9 +2167,14 @@ function renderCards() {
     return;
   }
 
+  let skeletonsShown = 0;
   container.innerHTML = list.map(c => {
     const data = cacheData?.companies?.[c.name];
-    if (!data) return skeletonCardHtml(c);
+    if (!data) {
+      if (!isLoading || !marketCompanyTaskStates.has(c.name) || skeletonsShown >= 6) return '';
+      skeletonsShown += 1;
+      return skeletonCardHtml(c);
+    }
     return cardHtml(c, data);
   }).join('');
 }
